@@ -1,0 +1,69 @@
+# Stock Screener Configuration
+
+database:
+  path: "./database/stockCode.sqlite"
+  backup_enabled: true
+  backup_path: "./database/backups/"
+
+data_sources:
+  stock_list_url: "https://139.255.96.106:1443/GetAllStock"
+  price_data_url: "https://idxmobile.co.id//Data/hsx"
+  verify_ssl: false
+  timeout: 30
+  retry_attempts: 3
+  retry_delay: 5  # seconds
+
+# Technical indicators configuration
+indicators:
+  sma_periods: [20, 50, 200]
+  ema_periods: [12, 26]
+  rsi_period: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bollinger_period: 20
+  bollinger_std: 2
+  atr_period: 14
+  stochastic_k: 14
+  stochastic_d: 3
+  stochastic_smooth: 3
+  cci_period: 20
+  roc_period: 12
+
+# Signal detection configuration
+signals:
+  min_strength: 50
+  volume_breakout_threshold: 2.0
+  rsi_oversold: 30
+  rsi_overbought: 70
+  signal_expiry_days: 5  # Deactivate signals older than this
+
+# Data fetching configuration
+fetching:
+  batch_size: 10  # Number of stocks to fetch in parallel
+  fetch_history_days: 365  # Default history to fetch
+  update_interval: "daily"  # daily, hourly, etc.
+
+# Scheduling (if using scheduler)
+scheduling:
+  enabled: false
+  data_fetch_time: "16:00"  # After market close
+  indicator_calc_time: "16:30"
+  signal_detect_time: "17:00"
+  timezone: "Asia/Jakarta"
+
+# Logging configuration
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  file: "./logs/screener.log"
+  max_size: "10MB"
+  backup_count: 5
+  format: "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {name}:{function}:{line} - {message}"
+  console_output: true
+
+# Performance settings
+performance:
+  enable_caching: true
+  cache_ttl: 3600  # seconds
+  parallel_processing: true
+  max_workers: 4

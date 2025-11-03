@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IDX Stock Screener - Pattern System</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>📊 IDX Stock Screener</h1>
+            <p class="subtitle">Pattern-Based Screening System</p>
+        </header>
+
+        <!-- Pattern Selector Section -->
+        <section class="pattern-selector">
+            <div class="selector-header">
+                <h2>Select Pattern</h2>
+                <div class="pattern-stats">
+                    <span id="pattern-count">Loading...</span>
+                </div>
+            </div>
+
+            <div class="selector-controls">
+                <select id="pattern-dropdown" class="pattern-select">
+                    <option value="">Loading patterns...</option>
+                </select>
+
+                <div class="button-group">
+                    <button id="run-btn" class="btn btn-primary" disabled>
+                        ▶ Run Screen
+                    </button>
+                    <button id="details-btn" class="btn btn-secondary" disabled>
+                        ℹ Details
+                    </button>
+                </div>
+            </div>
+
+            <!-- Pattern Details Panel -->
+            <div id="pattern-details" class="pattern-details" style="display: none;">
+                <div class="details-header">
+                    <h3 id="details-name">Pattern Details</h3>
+                    <button id="close-details" class="btn-close">×</button>
+                </div>
+                <p id="details-description" class="details-description"></p>
+
+                <div class="criteria-section">
+                    <div class="criteria-column">
+                        <h4>🔧 Technical Criteria</h4>
+                        <div id="details-technical" class="criteria-content">
+                            No technical criteria
+                        </div>
+                    </div>
+
+                    <div class="criteria-column">
+                        <h4>📊 Fundamental Criteria</h4>
+                        <div id="details-fundamental" class="criteria-content">
+                            No fundamental criteria
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Stock Analyzer Section -->
+        <section class="stock-analyzer">
+            <div class="analyzer-header">
+                <h2>Stock Analyzer</h2>
+                <p class="analyzer-subtitle">Enter a stock code to see all signals and fundamentals</p>
+            </div>
+
+            <div class="analyzer-controls">
+                <input type="text"
+                       id="stock-input"
+                       class="stock-input"
+                       placeholder="Enter stock code (e.g., BBCA, TLKM, ASII)"
+                       maxlength="6">
+
+                <button id="analyze-btn" class="btn btn-primary">
+                    🔍 Analyze Stock
+                </button>
+            </div>
+        </section>
+
+        <!-- Results Section -->
+        <section class="results-section">
+            <div class="results-header">
+                <h2>Screening Results</h2>
+                <div class="results-info">
+                    <span id="results-count" class="results-count">No results yet</span>
+                    <span id="execution-time" class="execution-time"></span>
+                </div>
+            </div>
+
+            <!-- Loading Indicator -->
+            <div id="loading" class="loading" style="display: none;">
+                <div class="spinner"></div>
+                <p>Screening stocks...</p>
+            </div>
+
+            <!-- Results Table -->
+            <div id="results-container" class="results-container">
+                <div class="placeholder">
+                    <p>👆 Select a pattern and click "Run Screen" to see results</p>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
