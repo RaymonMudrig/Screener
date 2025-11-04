@@ -158,80 +158,124 @@ class PatternEngine:
         Returns:
             List of stocks meeting fundamental criteria
         """
-        # Use existing screener methods based on criteria
+        # Use generic screening that can handle multiple criteria
+        return self._generic_fundamental_screen(criteria)
+
+    def _generic_fundamental_screen(self, criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Generic fundamental screener that applies all criteria dynamically.
+
+        Args:
+            criteria: Dictionary of fundamental metric criteria
+
+        Returns:
+            List of stocks meeting all criteria
+        """
+        conn = self._get_connection()
+        cursor = conn.cursor()
+
+        # Build SQL query dynamically
+        conditions = []
+        params = []
+        joins = []
+
+        # Map criteria keys to database columns in fundamental_data
+        fundamental_data_columns = {
+            'pe_ratio': 'fd.pe_ratio',
+            'pb_ratio': 'fd.pb_ratio',
+            'roe_percent': 'fd.roe_percent',
+            'roa_percent': 'fd.roa_percent',
+            'npm_percent': 'fd.npm_percent',
+            'debt_to_equity': 'fd.debt_equity_ratio',
+            'cf_operating': 'fd.cf_operating',
+            'cf_investing': 'fd.cf_investing',
+            'cf_financing': 'fd.cf_financing',
+        }
+
+        # Metrics that need to be joined from fundamental_metrics table
+        metrics_table_columns = [
+            'peg_ratio', 'ps_ratio', 'revenue_growth_yoy', 'eps_growth_yoy',
+            'roic', 'piotroski_score', 'altman_z_score', 'ev_ebitda',
+            'current_ratio', 'quick_ratio', 'debt_to_assets', 'cash_ratio', 'market_cap'
+        ]
+
+        # Build WHERE conditions for fundamental_data columns
+        for metric, bounds in criteria.items():
+            if metric in fundamental_data_columns:
+                col = fundamental_data_columns[metric]
+                if isinstance(bounds, dict):
+                    if 'min' in bounds and bounds['min'] is not None:
+                        conditions.append(f"{col} >= ?")
+                        params.append(bounds['min'])
+                    if 'max' in bounds and bounds['max'] is not None and bounds['max'] != 999 and bounds['max'] != 999999999999:
+                        conditions.append(f"{col} <= ?")
+                        params.append(bounds['max'])
+
+            elif metric in metrics_table_columns:
+                # Add join and condition for fundamental_metrics table
+                alias = f"fm_{metric}"
+                joins.append(f"""
+                    LEFT JOIN fundamental_metrics {alias}
+                    ON fd.stock_id = {alias}.stock_id
+                    AND {alias}.metric_name = '{metric}'
+                """)
+
+                if isinstance(bounds, dict):
+                    if 'min' in bounds and bounds['min'] is not None:
+                        conditions.append(f"{alias}.value >= ?")
+                        params.append(bounds['min'])
+                    if 'max' in bounds and bounds['max'] is not None and bounds['max'] != 999 and bounds['max'] != 999999999999:
+                        conditions.append(f"{alias}.value <= ?")
+                        params.append(bounds['max'])
+
+        if not conditions:
+            return []
+
+        # Build joins string
+        joins_str = ' '.join(joins) if joins else ''
+
+        # Query with all fundamental metrics
+        query = f"""
+            SELECT DISTINCT
+                fd.stock_id,
+                fd.pe_ratio,
+                fd.pb_ratio,
+                fd.roe_percent,
+                fd.roa_percent,
+                fd.npm_percent,
+                fd.debt_equity_ratio as debt_to_equity,
+                fd.cf_operating,
+                fd.cf_investing,
+                fd.cf_financing,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'peg_ratio' LIMIT 1) as peg_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'ps_ratio' LIMIT 1) as ps_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'revenue_growth_yoy' LIMIT 1) as revenue_growth_yoy,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'eps_growth_yoy' LIMIT 1) as eps_growth_yoy,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'roic' LIMIT 1) as roic,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'piotroski_score' LIMIT 1) as piotroski_score,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'altman_z_score' LIMIT 1) as altman_z_score,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'ev_ebitda' LIMIT 1) as ev_ebitda,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'current_ratio' LIMIT 1) as current_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'quick_ratio' LIMIT 1) as quick_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'debt_to_assets' LIMIT 1) as debt_to_assets,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'cash_ratio' LIMIT 1) as cash_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'market_cap' LIMIT 1) as market_cap
+            FROM fundamental_data fd
+            {joins_str}
+            WHERE {' AND '.join(conditions)}
+            LIMIT 100
+        """
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
         results = []
+        for row in rows:
+            result = dict(row)
+            result['score'] = 80  # Default score
+            results.append(result)
 
-        # Check for common screening patterns
-        if 'peg_ratio' in criteria and 'eps_growth_yoy' in criteria and 'roe_percent' in criteria:
-            # GARP pattern
-            max_peg = criteria['peg_ratio'].get('max', 1.0)
-            min_growth = criteria['eps_growth_yoy'].get('min', 10.0)
-            min_roe = criteria['roe_percent'].get('min', 12.0)
-            results = self.fundamental_screener.screen_garp(max_peg, min_growth, min_roe)
-
-        elif 'roic' in criteria and 'ev_ebitda' in criteria:
-            # Magic Formula pattern
-            min_roic = criteria['roic'].get('min', 12.0)
-            max_ev = criteria['ev_ebitda'].get('max', 15.0)
-            results = self.fundamental_screener.screen_magic_formula(min_roic, max_ev)
-
-        elif 'piotroski_score' in criteria and 'current_ratio' in criteria and 'debt_to_assets' in criteria:
-            # Financial Strength pattern
-            # Note: screen_financial_strength uses fixed criteria
-            results = self.fundamental_screener.screen_financial_strength()
-
-        elif 'pe_ratio' in criteria:
-            # Value pattern with P/E
-            max_pe = criteria['pe_ratio'].get('max', 15.0)
-            results = self.fundamental_screener.screen_low_pe(max_pe, 0)
-
-        elif 'pb_ratio' in criteria:
-            # Value pattern with P/B
-            max_pb = criteria['pb_ratio'].get('max', 1.5)
-            results = self.fundamental_screener.screen_low_pb(max_pb, 0)
-
-        elif 'roe_percent' in criteria:
-            # Quality pattern with ROE
-            min_roe = criteria['roe_percent'].get('min', 15.0)
-            results = self.fundamental_screener.screen_high_roe(min_roe)
-
-        elif 'piotroski_score' in criteria:
-            # Quality pattern with Piotroski
-            min_score = criteria['piotroski_score'].get('min', 7)
-            results = self.fundamental_screener.screen_high_piotroski(min_score)
-
-        elif 'revenue_growth_yoy' in criteria:
-            # Growth pattern
-            min_growth = criteria['revenue_growth_yoy'].get('min', 20.0)
-            results = self.fundamental_screener.screen_revenue_growth(min_growth)
-
-        elif 'current_ratio' in criteria:
-            # Liquidity pattern
-            min_current = criteria['current_ratio'].get('min', 2.0)
-            results = self.fundamental_screener.screen_strong_liquidity(min_current)
-
-        elif 'debt_to_assets' in criteria or 'debt_to_equity' in criteria:
-            # Low debt pattern
-            max_debt = criteria.get('debt_to_assets', {}).get('max', 0.4)
-            results = self.fundamental_screener.screen_low_debt(max_debt)
-
-        # Format results for pattern engine
-        formatted_results = []
-        for stock in results:
-            formatted_results.append({
-                'stock_id': stock.get('stock_id'),
-                'pe_ratio': stock.get('pe_ratio'),
-                'pb_ratio': stock.get('pb_ratio'),
-                'roe_percent': stock.get('roe_percent'),
-                'revenue_growth_yoy': stock.get('revenue_growth_yoy'),
-                'eps_growth_yoy': stock.get('eps_growth_yoy'),
-                'piotroski_score': stock.get('piotroski_score'),
-                'peg_ratio': stock.get('peg_ratio'),
-                'roic': stock.get('roic'),
-                'score': 80  # Default good score for matches
-            })
-
-        return formatted_results
+        return results
 
     def _screen_technical(self, criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
         """

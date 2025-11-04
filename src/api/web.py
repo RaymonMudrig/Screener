@@ -20,6 +20,7 @@ from flask_cors import CORS
 import json
 import traceback
 import sys
+import math
 from pathlib import Path
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -61,6 +62,21 @@ last_refresh_status = {
     'status': 'not_started',
     'stats': None
 }
+
+
+def sanitize_json_value(value):
+    """
+    Sanitize a value for JSON serialization
+    Converts Infinity, -Infinity, and NaN to None
+    """
+    if isinstance(value, float):
+        if math.isinf(value) or math.isnan(value):
+            return None
+    elif isinstance(value, dict):
+        return {k: sanitize_json_value(v) for k, v in value.items()}
+    elif isinstance(value, list):
+        return [sanitize_json_value(item) for item in value]
+    return value
 
 
 def is_market_hours():
@@ -322,18 +338,13 @@ def run_pattern(pattern_id):
                 else:
                     formatted_result['signals'] = [{'name': s, 'strength': 0} for s in signals[:5]]
 
-            # Format fundamentals
+            # Format fundamentals - return all matched fundamentals
             fundamentals = result.get('matched_fundamentals', {})
             if fundamentals:
+                # Return all fundamentals that have non-null values
                 formatted_result['fundamentals'] = {
-                    'pe_ratio': fundamentals.get('pe_ratio'),
-                    'pb_ratio': fundamentals.get('pb_ratio'),
-                    'roe_percent': fundamentals.get('roe_percent'),
-                    'revenue_growth_yoy': fundamentals.get('revenue_growth_yoy'),
-                    'eps_growth_yoy': fundamentals.get('eps_growth_yoy'),
-                    'peg_ratio': fundamentals.get('peg_ratio'),
-                    'roic': fundamentals.get('roic'),
-                    'piotroski_score': fundamentals.get('piotroski_score')
+                    key: value for key, value in fundamentals.items()
+                    if value is not None
                 }
 
             formatted_results.append(formatted_result)
@@ -946,11 +957,15 @@ def analyze_stock(stock_id):
                     'date': stored_signal['date']
                 })
 
+        # Sanitize indicators to remove Infinity and NaN values
+        sanitized_indicators = sanitize_json_value(indicators)
+        sanitized_fundamentals = sanitize_json_value(fundamentals)
+
         return jsonify({
             'stock_id': stock_id.upper(),
             'signals': realtime_signals,
-            'fundamentals': fundamentals,
-            'indicators': indicators,
+            'fundamentals': sanitized_fundamentals,
+            'indicators': sanitized_indicators,
             'signal_summary': {
                 'total': len(realtime_signals),
                 'bullish': len([s for s in realtime_signals if s['direction'] == 'bullish']),

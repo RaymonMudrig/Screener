@@ -32,10 +32,25 @@ const executionTime = document.getElementById('execution-time');
 const stockInput = document.getElementById('stock-input');
 const analyzeBtn = document.getElementById('analyze-btn');
 
+// Pattern Editor Elements
+const addPatternBtn = document.getElementById('add-pattern-btn');
+const editPatternBtn = document.getElementById('edit-pattern-btn');
+const deletePatternBtn = document.getElementById('delete-pattern-btn');
+const patternEditorModal = document.getElementById('pattern-editor-modal');
+const closeEditorBtn = document.getElementById('close-editor');
+const cancelEditorBtn = document.getElementById('cancel-editor-btn');
+const savePatternBtn = document.getElementById('save-pattern-btn');
+const editorTitle = document.getElementById('editor-title');
+
+// Editor State
+let editorMode = 'create'; // 'create' or 'edit'
+let editingPatternId = null;
+
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     loadPatterns();
     setupEventListeners();
+    initializePatternEditor();
 });
 
 // Setup Event Listeners
@@ -44,6 +59,14 @@ function setupEventListeners() {
     runBtn.addEventListener('click', runScreening);
     detailsBtn.addEventListener('click', showPatternDetails);
     closeDetailsBtn.addEventListener('click', hidePatternDetails);
+
+    // Pattern Editor
+    addPatternBtn.addEventListener('click', openEditorForCreate);
+    editPatternBtn.addEventListener('click', openEditorForEdit);
+    deletePatternBtn.addEventListener('click', deletePattern);
+    closeEditorBtn.addEventListener('click', closePatternEditor);
+    cancelEditorBtn.addEventListener('click', closePatternEditor);
+    savePatternBtn.addEventListener('click', savePattern);
 
     // Stock Analyzer
     analyzeBtn.addEventListener('click', analyzeStock);
@@ -115,6 +138,8 @@ async function handlePatternChange(e) {
     if (!patternId) {
         runBtn.disabled = true;
         detailsBtn.disabled = true;
+        editPatternBtn.disabled = true;
+        deletePatternBtn.disabled = true;
         selectedPattern = null;
         hidePatternDetails();
         return;
@@ -128,6 +153,11 @@ async function handlePatternChange(e) {
     try {
         const response = await fetch(`${API_BASE}/api/patterns/${patternId}`);
         selectedPattern = await response.json();
+
+        // Enable Edit/Delete only for custom patterns (not presets)
+        const isCustom = !selectedPattern.is_preset;
+        editPatternBtn.disabled = !isCustom;
+        deletePatternBtn.disabled = !isCustom;
     } catch (error) {
         console.error('Error loading pattern details:', error);
         showError('Failed to load pattern details.');
@@ -253,6 +283,9 @@ function displayResults(data) {
         return;
     }
 
+    // Get pattern's fundamental criteria to filter display
+    const patternCriteria = selectedPattern?.fundamental_criteria || {};
+
     // Create table
     let html = `
         <table class="results-table">
@@ -270,7 +303,7 @@ function displayResults(data) {
     data.results.forEach(result => {
         const scoreClass = getScoreClass(result.match_score);
         const signalsHtml = formatSignals(result.signals);
-        const fundamentalsHtml = formatFundamentals(result.fundamentals);
+        const fundamentalsHtml = formatFundamentals(result.fundamentals, patternCriteria);
 
         html += `
             <tr>
@@ -305,40 +338,64 @@ function formatSignals(signals) {
     }).join(' ');
 }
 
-// Format Fundamentals
-function formatFundamentals(fundamentals) {
+// Format Fundamentals - only show metrics in pattern criteria
+function formatFundamentals(fundamentals, patternCriteria = {}) {
     if (!fundamentals || Object.keys(fundamentals).length === 0) {
         return '<span style="color: #999;">-</span>';
     }
 
+    // Metric display configuration (label and formatter)
+    const metricConfig = {
+        'pe_ratio': { label: 'P/E', format: (v) => v.toFixed(1) },
+        'pb_ratio': { label: 'P/B', format: (v) => v.toFixed(1) },
+        'ps_ratio': { label: 'P/S', format: (v) => v.toFixed(1) },
+        'peg_ratio': { label: 'PEG', format: (v) => v.toFixed(2) },
+        'ev_ebitda': { label: 'EV/EBITDA', format: (v) => v.toFixed(1) },
+        'roe_percent': { label: 'ROE', format: (v) => v.toFixed(1) + '%' },
+        'roa_percent': { label: 'ROA', format: (v) => v.toFixed(1) + '%' },
+        'roic': { label: 'ROIC', format: (v) => v.toFixed(1) + '%' },
+        'npm_percent': { label: 'NPM', format: (v) => v.toFixed(1) + '%' },
+        'revenue_growth_yoy': { label: 'Rev Growth', format: (v) => v.toFixed(1) + '%' },
+        'eps_growth_yoy': { label: 'EPS Growth', format: (v) => v.toFixed(1) + '%' },
+        'current_ratio': { label: 'Current Ratio', format: (v) => v.toFixed(2) },
+        'quick_ratio': { label: 'Quick Ratio', format: (v) => v.toFixed(2) },
+        'debt_to_assets': { label: 'Debt/Assets', format: (v) => v.toFixed(2) },
+        'debt_to_equity': { label: 'D/E', format: (v) => v.toFixed(2) },
+        'cash_ratio': { label: 'Cash Ratio', format: (v) => v.toFixed(2) },
+        'piotroski_score': { label: 'F-Score', format: (v) => Math.round(v) },
+        'altman_z_score': { label: 'Z-Score', format: (v) => v.toFixed(2) },
+        'market_cap': { label: 'Market Cap', format: (v) => formatLargeNumber(v) },
+        'cf_operating': { label: 'Op Cash Flow', format: (v) => formatLargeNumber(v) },
+        'cf_investing': { label: 'Inv Cash Flow', format: (v) => formatLargeNumber(v) },
+        'cf_financing': { label: 'Fin Cash Flow', format: (v) => formatLargeNumber(v) }
+    };
+
     const items = [];
 
-    if (fundamentals.pe_ratio !== null && fundamentals.pe_ratio !== undefined) {
-        items.push(`P/E: ${fundamentals.pe_ratio.toFixed(1)}`);
-    }
+    // Get list of metrics that are in the pattern criteria
+    const criteriaKeys = Object.keys(patternCriteria);
 
-    if (fundamentals.pb_ratio !== null && fundamentals.pb_ratio !== undefined) {
-        items.push(`P/B: ${fundamentals.pb_ratio.toFixed(1)}`);
-    }
+    // If no criteria specified, show all (fallback for backwards compatibility)
+    const metricsToShow = criteriaKeys.length > 0 ? criteriaKeys : Object.keys(fundamentals);
 
-    if (fundamentals.roe_percent !== null && fundamentals.roe_percent !== undefined) {
-        items.push(`ROE: ${fundamentals.roe_percent.toFixed(1)}%`);
-    }
+    // Only display metrics that are in the pattern criteria
+    for (const key of metricsToShow) {
+        // Skip non-metric keys like 'stock_id', 'score'
+        if (key === 'stock_id' || key === 'score') continue;
 
-    if (fundamentals.revenue_growth_yoy !== null && fundamentals.revenue_growth_yoy !== undefined) {
-        items.push(`Growth: ${fundamentals.revenue_growth_yoy.toFixed(1)}%`);
-    }
-
-    if (fundamentals.peg_ratio !== null && fundamentals.peg_ratio !== undefined) {
-        items.push(`PEG: ${fundamentals.peg_ratio.toFixed(2)}`);
-    }
-
-    if (fundamentals.roic !== null && fundamentals.roic !== undefined) {
-        items.push(`ROIC: ${fundamentals.roic.toFixed(1)}%`);
-    }
-
-    if (fundamentals.piotroski_score !== null && fundamentals.piotroski_score !== undefined) {
-        items.push(`F-Score: ${fundamentals.piotroski_score}`);
+        const value = fundamentals[key];
+        if (value !== null && value !== undefined) {
+            const config = metricConfig[key];
+            if (config) {
+                try {
+                    const formattedValue = config.format(value);
+                    items.push(`${config.label}: ${formattedValue}`);
+                } catch (e) {
+                    // Skip if formatting fails
+                    console.warn(`Failed to format ${key}:`, e);
+                }
+            }
+        }
     }
 
     if (items.length === 0) {
@@ -542,5 +599,353 @@ function formatLargeNumber(num) {
         return (num / 1_000_000).toFixed(2) + 'M';
     } else {
         return formatNumber(num);
+    }
+}
+
+// =============================================================================
+// PATTERN EDITOR FUNCTIONS
+// =============================================================================
+
+// Available Technical Signals
+const AVAILABLE_SIGNALS = {
+    'Trend': [
+        { id: 'golden_cross', name: 'Golden Cross' },
+        { id: 'death_cross', name: 'Death Cross' },
+        { id: 'fast_cross', name: 'Fast Cross (SMA20/50)' },
+        { id: 'bullish_trend', name: 'Bullish Trend' },
+        { id: 'bearish_trend', name: 'Bearish Trend' },
+        { id: 'bullish_breakout', name: 'Bullish Breakout' }
+    ],
+    'Momentum': [
+        { id: 'rsi_oversold', name: 'RSI Oversold' },
+        { id: 'rsi_overbought', name: 'RSI Overbought' },
+        { id: 'rsi_bullish', name: 'RSI Bullish' },
+        { id: 'rsi_bearish', name: 'RSI Bearish' },
+        { id: 'macd_positive', name: 'MACD Positive' },
+        { id: 'macd_negative', name: 'MACD Negative' },
+        { id: 'stochastic_oversold', name: 'Stochastic Oversold' },
+        { id: 'stochastic_overbought', name: 'Stochastic Overbought' },
+        { id: 'cci_extreme', name: 'CCI Extreme' },
+        { id: 'williams_extreme', name: 'Williams %R Extreme' }
+    ],
+    'Volatility': [
+        { id: 'bollinger_squeeze', name: 'Bollinger Squeeze' },
+        { id: 'bollinger_breakout', name: 'Bollinger Breakout' }
+    ],
+    'Volume': [
+        { id: 'volume_surge', name: 'Volume Surge' }
+    ]
+};
+
+// Available Fundamental Metrics
+const AVAILABLE_METRICS = [
+    { id: 'pe_ratio', name: 'P/E Ratio', defaultMin: 0, defaultMax: 15 },
+    { id: 'pb_ratio', name: 'P/B Ratio', defaultMin: 0, defaultMax: 1.5 },
+    { id: 'ps_ratio', name: 'P/S Ratio', defaultMin: 0, defaultMax: 2.0 },
+    { id: 'peg_ratio', name: 'PEG Ratio', defaultMin: 0, defaultMax: 1.0 },
+    { id: 'ev_ebitda', name: 'EV/EBITDA', defaultMin: 0, defaultMax: 15 },
+    { id: 'roe_percent', name: 'ROE %', defaultMin: 15, defaultMax: 999 },
+    { id: 'roa_percent', name: 'ROA %', defaultMin: 10, defaultMax: 999 },
+    { id: 'roic', name: 'ROIC %', defaultMin: 12, defaultMax: 999 },
+    { id: 'npm_percent', name: 'Net Profit Margin %', defaultMin: 10, defaultMax: 999 },
+    { id: 'revenue_growth_yoy', name: 'Revenue Growth (YoY) %', defaultMin: 20, defaultMax: 999 },
+    { id: 'eps_growth_yoy', name: 'EPS Growth (YoY) %', defaultMin: 15, defaultMax: 999 },
+    { id: 'current_ratio', name: 'Current Ratio', defaultMin: 2.0, defaultMax: 999 },
+    { id: 'quick_ratio', name: 'Quick Ratio', defaultMin: 1.0, defaultMax: 999 },
+    { id: 'debt_to_assets', name: 'Debt/Assets', defaultMin: 0, defaultMax: 0.4 },
+    { id: 'debt_to_equity', name: 'Debt/Equity', defaultMin: 0, defaultMax: 1.0 },
+    { id: 'cash_ratio', name: 'Cash Ratio', defaultMin: 0.5, defaultMax: 999 },
+    { id: 'piotroski_score', name: 'Piotroski F-Score', defaultMin: 7, defaultMax: 9 },
+    { id: 'altman_z_score', name: 'Altman Z-Score', defaultMin: 3.0, defaultMax: 999 },
+    { id: 'market_cap', name: 'Market Cap', defaultMin: 1000000000, defaultMax: 999999999999 }
+];
+
+// Initialize Pattern Editor
+function initializePatternEditor() {
+    // Populate signals grid
+    const signalsGrid = document.getElementById('signals-grid');
+    signalsGrid.innerHTML = '';
+
+    for (const [category, signals] of Object.entries(AVAILABLE_SIGNALS)) {
+        signals.forEach(signal => {
+            const div = document.createElement('div');
+            div.className = 'signal-checkbox-group';
+            div.innerHTML = `
+                <label>
+                    <input type="checkbox" data-signal="${signal.id}">
+                    ${signal.name}
+                </label>
+                <span class="signal-type-label">${category}</span>
+            `;
+
+            // Add change handler to update visual state
+            const checkbox = div.querySelector('input');
+            checkbox.addEventListener('change', () => {
+                div.classList.toggle('selected', checkbox.checked);
+            });
+
+            signalsGrid.appendChild(div);
+        });
+    }
+
+    // Populate metrics container
+    const metricsContainer = document.getElementById('metrics-container');
+    metricsContainer.innerHTML = '';
+
+    AVAILABLE_METRICS.forEach(metric => {
+        const div = document.createElement('div');
+        div.className = 'metric-control';
+        div.innerHTML = `
+            <div class="metric-header">
+                <input type="checkbox" id="metric-${metric.id}" data-metric="${metric.id}">
+                <label for="metric-${metric.id}">${metric.name}</label>
+            </div>
+            <div class="metric-inputs">
+                <div class="metric-input-group">
+                    <label>Minimum</label>
+                    <input type="number" id="metric-${metric.id}-min" step="any" disabled>
+                </div>
+                <div class="metric-input-group">
+                    <label>Maximum</label>
+                    <input type="number" id="metric-${metric.id}-max" step="any" disabled>
+                </div>
+            </div>
+        `;
+
+        // Add change handler to enable/disable inputs
+        const checkbox = div.querySelector('input[type="checkbox"]');
+        const minInput = div.querySelector(`#metric-${metric.id}-min`);
+        const maxInput = div.querySelector(`#metric-${metric.id}-max`);
+
+        checkbox.addEventListener('change', () => {
+            const isEnabled = checkbox.checked;
+            div.classList.toggle('enabled', isEnabled);
+            minInput.disabled = !isEnabled;
+            maxInput.disabled = !isEnabled;
+
+            if (isEnabled) {
+                // Set default values when enabled
+                minInput.value = metric.defaultMin;
+                maxInput.value = metric.defaultMax;
+            }
+        });
+
+        metricsContainer.appendChild(div);
+    });
+}
+
+// Open Editor for Creating New Pattern
+function openEditorForCreate() {
+    editorMode = 'create';
+    editingPatternId = null;
+    editorTitle.textContent = 'Create Custom Pattern';
+
+    // Reset form
+    document.getElementById('pattern-name').value = '';
+    document.getElementById('pattern-category').value = 'custom';
+    document.getElementById('pattern-description').value = '';
+    document.getElementById('min-signal-strength').value = '70';
+
+    // Reset all checkboxes
+    document.querySelectorAll('.signal-checkbox-group input[type="checkbox"]').forEach(cb => {
+        cb.checked = false;
+        cb.closest('.signal-checkbox-group').classList.remove('selected');
+    });
+
+    document.querySelectorAll('.metric-control input[type="checkbox"]').forEach(cb => {
+        cb.checked = false;
+        cb.dispatchEvent(new Event('change')); // Trigger to disable inputs
+    });
+
+    // Show modal
+    patternEditorModal.style.display = 'flex';
+}
+
+// Open Editor for Editing Existing Pattern
+async function openEditorForEdit() {
+    if (!selectedPattern || selectedPattern.is_preset) {
+        alert('Cannot edit preset patterns. Only custom patterns can be edited.');
+        return;
+    }
+
+    editorMode = 'edit';
+    editingPatternId = selectedPattern.pattern_id;
+    editorTitle.textContent = 'Edit Custom Pattern';
+
+    // Fill form with existing data
+    document.getElementById('pattern-name').value = selectedPattern.pattern_name;
+    document.getElementById('pattern-category').value = selectedPattern.category;
+    document.getElementById('pattern-description').value = selectedPattern.description || '';
+
+    // Technical criteria
+    const techCriteria = selectedPattern.technical_criteria || {};
+    const signals = techCriteria.signals || [];
+    const minStrength = techCriteria.min_signal_strength || 70;
+
+    document.getElementById('min-signal-strength').value = minStrength;
+
+    // Reset and set signals
+    document.querySelectorAll('.signal-checkbox-group input[type="checkbox"]').forEach(cb => {
+        const signalId = cb.getAttribute('data-signal');
+        const isChecked = signals.includes(signalId);
+        cb.checked = isChecked;
+        cb.closest('.signal-checkbox-group').classList.toggle('selected', isChecked);
+    });
+
+    // Fundamental criteria
+    const fundCriteria = selectedPattern.fundamental_criteria || {};
+
+    // Reset all metrics
+    document.querySelectorAll('.metric-control input[type="checkbox"]').forEach(cb => {
+        cb.checked = false;
+        cb.dispatchEvent(new Event('change'));
+    });
+
+    // Set metrics that are defined
+    for (const [metricId, values] of Object.entries(fundCriteria)) {
+        const checkbox = document.getElementById(`metric-${metricId}`);
+        if (checkbox) {
+            checkbox.checked = true;
+            checkbox.dispatchEvent(new Event('change'));
+
+            if (values && typeof values === 'object') {
+                const minInput = document.getElementById(`metric-${metricId}-min`);
+                const maxInput = document.getElementById(`metric-${metricId}-max`);
+                if (minInput && values.min !== undefined) minInput.value = values.min;
+                if (maxInput && values.max !== undefined) maxInput.value = values.max;
+            }
+        }
+    }
+
+    // Show modal
+    patternEditorModal.style.display = 'flex';
+}
+
+// Close Pattern Editor
+function closePatternEditor() {
+    patternEditorModal.style.display = 'none';
+}
+
+// Save Pattern
+async function savePattern() {
+    // Collect form data
+    const patternName = document.getElementById('pattern-name').value.trim();
+    const category = document.getElementById('pattern-category').value;
+    const description = document.getElementById('pattern-description').value.trim();
+    const minSignalStrength = parseInt(document.getElementById('min-signal-strength').value);
+
+    // Validate
+    if (!patternName) {
+        alert('Please enter a pattern name');
+        return;
+    }
+
+    // Collect selected signals
+    const selectedSignals = [];
+    document.querySelectorAll('.signal-checkbox-group input[type="checkbox"]:checked').forEach(cb => {
+        selectedSignals.push(cb.getAttribute('data-signal'));
+    });
+
+    // Collect enabled metrics
+    const fundamentalCriteria = {};
+    document.querySelectorAll('.metric-control input[type="checkbox"]:checked').forEach(cb => {
+        const metricId = cb.getAttribute('data-metric');
+        const minInput = document.getElementById(`metric-${metricId}-min`);
+        const maxInput = document.getElementById(`metric-${metricId}-max`);
+
+        fundamentalCriteria[metricId] = {
+            min: parseFloat(minInput.value) || 0,
+            max: parseFloat(maxInput.value) || 999
+        };
+    });
+
+    // Build pattern object
+    const pattern = {
+        pattern_name: patternName,
+        category: category,
+        description: description,
+        technical_criteria: selectedSignals.length > 0 ? {
+            signals: selectedSignals,
+            min_signal_strength: minSignalStrength
+        } : {},
+        fundamental_criteria: fundamentalCriteria
+    };
+
+    // Add pattern_id for create mode
+    if (editorMode === 'create') {
+        // Generate pattern_id from pattern name
+        pattern.pattern_id = patternName.toLowerCase()
+            .replace(/[^a-z0-9]+/g, '_')
+            .replace(/^_+|_+$/g, '');
+    }
+
+    try {
+        let response;
+        if (editorMode === 'create') {
+            // Create new pattern
+            response = await fetch(`${API_BASE}/api/patterns`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(pattern)
+            });
+        } else {
+            // Update existing pattern
+            response = await fetch(`${API_BASE}/api/patterns/${editingPatternId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(pattern)
+            });
+        }
+
+        if (response.ok) {
+            closePatternEditor();
+            await loadPatterns();
+            alert(`Pattern ${editorMode === 'create' ? 'created' : 'updated'} successfully!`);
+
+            // Select the newly created/edited pattern
+            if (editorMode === 'create') {
+                patternDropdown.value = pattern.pattern_id;
+            } else {
+                patternDropdown.value = editingPatternId;
+            }
+            patternDropdown.dispatchEvent(new Event('change'));
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to save pattern');
+        }
+    } catch (error) {
+        console.error('Error saving pattern:', error);
+        alert(`Failed to save pattern: ${error.message}`);
+    }
+}
+
+// Delete Pattern
+async function deletePattern() {
+    if (!selectedPattern || selectedPattern.is_preset) {
+        alert('Cannot delete preset patterns. Only custom patterns can be deleted.');
+        return;
+    }
+
+    const confirmDelete = confirm(`Are you sure you want to delete "${selectedPattern.pattern_name}"? This action cannot be undone.`);
+    if (!confirmDelete) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/patterns/${selectedPattern.pattern_id}`, {
+            method: 'DELETE'
+        });
+
+        if (response.ok) {
+            alert('Pattern deleted successfully!');
+            selectedPattern = null;
+            await loadPatterns();
+            patternDropdown.value = '';
+            patternDropdown.dispatchEvent(new Event('change'));
+        } else {
+            const error = await response.json();
+            throw new Error(error.error || 'Failed to delete pattern');
+        }
+    } catch (error) {
+        console.error('Error deleting pattern:', error);
+        alert(`Failed to delete pattern: ${error.message}`);
     }
 }
