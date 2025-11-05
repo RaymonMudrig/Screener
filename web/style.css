@@ -430,11 +430,34 @@ body {
     font-weight: 600;
     color: #333;
     border-bottom: 2px solid #e0e0e0;
+    white-space: nowrap;
+}
+
+.results-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s;
+}
+
+.results-table th.sortable:hover {
+    background: #f0f0f0;
+}
+
+.sort-indicator {
+    display: inline;
+    font-size: 0.9em;
+    color: #667eea;
 }
 
 .results-table td {
     padding: 8px 10px;
     border-bottom: 1px solid #f0f0f0;
+}
+
+.results-table td.metric-value {
+    text-align: right;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
 }
 
 .results-table tbody tr:hover {
@@ -909,25 +932,30 @@ textarea.form-input {
     border-color: #667eea;
 }
 
-.metric-header {
+.metric-control .metric-header {
     display: flex;
     align-items: center;
     margin-bottom: 10px;
 }
 
-.metric-header input[type="checkbox"] {
+.metric-control .metric-header input[type="checkbox"] {
     margin-right: 10px;
     cursor: pointer;
     width: 18px;
     height: 18px;
 }
 
-.metric-header label {
+.metric-control .metric-header label {
     flex: 1;
     cursor: pointer;
     font-weight: 600;
     color: #333;
     font-size: 0.95em;
+}
+
+/* Table header styling for metric columns */
+.results-table th.metric-header {
+    text-align: right;
 }
 
 .metric-inputs {

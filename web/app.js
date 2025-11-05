@@ -441,40 +441,143 @@ function displayResults(data) {
         return;
     }
 
-    // Get pattern's fundamental criteria to filter display
+    // Store results for sorting
+    window.currentDisplayResults = data.results;
+    window.currentSortColumn = 'match_score';
+    window.currentSortDirection = 'desc';
+
+    renderResultsTable();
+}
+
+// Render Results Table
+function renderResultsTable() {
+    const results = window.currentDisplayResults || [];
+
+    // Get pattern's fundamental criteria to determine columns
     const patternCriteria = selectedPattern?.fundamental_criteria || {};
+    const fundamentalColumns = Object.keys(patternCriteria);
 
-    // Create table
-    let html = `
-        <table class="results-table">
-            <thead>
-                <tr>
-                    <th>Stock</th>
-                    <th>Match Score</th>
-                    <th>Signals</th>
-                    <th>Fundamentals</th>
-                </tr>
-            </thead>
-            <tbody>
-    `;
+    // Metric display configuration
+    const metricConfig = {
+        'pe_ratio': { label: 'P/E', format: (v) => v?.toFixed(1) || '-' },
+        'pb_ratio': { label: 'P/B', format: (v) => v?.toFixed(1) || '-' },
+        'ps_ratio': { label: 'P/S', format: (v) => v?.toFixed(1) || '-' },
+        'peg_ratio': { label: 'PEG', format: (v) => v?.toFixed(2) || '-' },
+        'ev_ebitda': { label: 'EV/EBITDA', format: (v) => v?.toFixed(1) || '-' },
+        'roe_percent': { label: 'ROE %', format: (v) => v?.toFixed(1) || '-' },
+        'roa_percent': { label: 'ROA %', format: (v) => v?.toFixed(1) || '-' },
+        'roic': { label: 'ROIC %', format: (v) => v?.toFixed(1) || '-' },
+        'npm_percent': { label: 'NPM %', format: (v) => v?.toFixed(1) || '-' },
+        'revenue_growth_yoy': { label: 'Rev Growth %', format: (v) => v?.toFixed(1) || '-' },
+        'eps_growth_yoy': { label: 'EPS Growth %', format: (v) => v?.toFixed(1) || '-' },
+        'current_ratio': { label: 'Current', format: (v) => v?.toFixed(2) || '-' },
+        'quick_ratio': { label: 'Quick', format: (v) => v?.toFixed(2) || '-' },
+        'debt_to_assets': { label: 'D/A', format: (v) => v?.toFixed(2) || '-' },
+        'debt_to_equity': { label: 'D/E', format: (v) => v?.toFixed(2) || '-' },
+        'cash_ratio': { label: 'Cash', format: (v) => v?.toFixed(2) || '-' },
+        'piotroski_score': { label: 'F-Score', format: (v) => v ? Math.round(v) : '-' },
+        'altman_z_score': { label: 'Z-Score', format: (v) => v?.toFixed(2) || '-' },
+        'market_cap': { label: 'Mkt Cap', format: (v) => v ? formatLargeNumber(v) : '-' },
+    };
 
-    data.results.forEach(result => {
+    // Create table header
+    let html = '<table class="results-table"><thead><tr>';
+    html += '<th class="sortable" onclick="sortResults(\'stock_id\')">Stock ' + getSortIndicator('stock_id') + '</th>';
+    html += '<th class="sortable" onclick="sortResults(\'match_score\')">Score ' + getSortIndicator('match_score') + '</th>';
+    html += '<th>Signals</th>';
+
+    // Add columns for each fundamental metric in the pattern
+    fundamentalColumns.forEach(metric => {
+        const config = metricConfig[metric];
+        if (config) {
+            html += '<th class="sortable metric-header" onclick="sortResults(\'' + metric + '\')">' + config.label + ' ' + getSortIndicator(metric) + '</th>';
+        }
+    });
+
+    html += '</tr></thead><tbody>';
+
+    // Create table rows
+    results.forEach(result => {
         const scoreClass = getScoreClass(result.match_score);
         const signalsHtml = formatSignals(result.signals);
-        const fundamentalsHtml = formatFundamentals(result.fundamentals, patternCriteria);
 
-        html += `
-            <tr>
-                <td><span class="stock-symbol stock-link" onclick="analyzeStockById('${result.stock_id}')" title="Click to analyze ${result.stock_id}">${result.stock_id}</span></td>
-                <td><span class="score-badge ${scoreClass}">${result.match_score}/100</span></td>
-                <td class="signals-list">${signalsHtml}</td>
-                <td>${fundamentalsHtml}</td>
-            </tr>
-        `;
+        html += `<tr>`;
+        html += `<td><span class="stock-symbol stock-link" onclick="analyzeStockById('${result.stock_id}')" title="Click to analyze ${result.stock_id}">${result.stock_id}</span></td>`;
+        html += `<td><span class="score-badge ${scoreClass}">${result.match_score}/100</span></td>`;
+        html += `<td class="signals-list">${signalsHtml}</td>`;
+
+        // Add fundamental metric values
+        fundamentalColumns.forEach(metric => {
+            const config = metricConfig[metric];
+            if (config) {
+                const value = result.fundamentals?.[metric];
+                html += `<td class="metric-value">${config.format(value)}</td>`;
+            }
+        });
+
+        html += `</tr>`;
     });
 
     html += '</tbody></table>';
     resultsContainer.innerHTML = html;
+}
+
+// Sort Results
+function sortResults(column) {
+    if (!window.currentDisplayResults) return;
+
+    // Toggle direction if same column
+    if (window.currentSortColumn === column) {
+        window.currentSortDirection = window.currentSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        window.currentSortColumn = column;
+        window.currentSortDirection = 'desc';
+    }
+
+    // Sort the results
+    window.currentDisplayResults.sort((a, b) => {
+        let aVal, bVal;
+
+        if (column === 'stock_id') {
+            aVal = a.stock_id;
+            bVal = b.stock_id;
+        } else if (column === 'match_score') {
+            aVal = a.match_score;
+            bVal = b.match_score;
+        } else {
+            // Fundamental metric
+            aVal = a.fundamentals?.[column];
+            bVal = b.fundamentals?.[column];
+        }
+
+        // Handle null/undefined values (put them at the end)
+        if (aVal === null || aVal === undefined) return 1;
+        if (bVal === null || bVal === undefined) return -1;
+
+        // Compare values
+        if (typeof aVal === 'string') {
+            return window.currentSortDirection === 'asc'
+                ? aVal.localeCompare(bVal)
+                : bVal.localeCompare(aVal);
+        } else {
+            return window.currentSortDirection === 'asc'
+                ? aVal - bVal
+                : bVal - aVal;
+        }
+    });
+
+    // Re-render table
+    renderResultsTable();
+}
+
+// Get Sort Indicator
+function getSortIndicator(column) {
+    if (window.currentSortColumn !== column) {
+        return '<span class="sort-indicator">⇅</span>';
+    }
+    return window.currentSortDirection === 'asc'
+        ? '<span class="sort-indicator">↑</span>'
+        : '<span class="sort-indicator">↓</span>';
 }
 
 // Get Score Class

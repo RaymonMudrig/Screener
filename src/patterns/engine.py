@@ -213,11 +213,22 @@ class PatternEngine:
 
             elif metric in metrics_table_columns:
                 # Add join and condition for fundamental_metrics table
+                # Use subquery to get most recent value per stock for the metric
                 alias = f"fm_{metric}"
                 joins.append(f"""
-                    LEFT JOIN fundamental_metrics {alias}
+                    LEFT JOIN (
+                        SELECT fm1.stock_id, fm1.value
+                        FROM fundamental_metrics fm1
+                        INNER JOIN (
+                            SELECT stock_id, MAX(year || '-' || quarter) as max_period
+                            FROM fundamental_metrics
+                            WHERE metric_name = '{metric}'
+                            GROUP BY stock_id
+                        ) fm2 ON fm1.stock_id = fm2.stock_id
+                            AND fm1.year || '-' || fm1.quarter = fm2.max_period
+                            AND fm1.metric_name = '{metric}'
+                    ) {alias}
                     ON fd.stock_id = {alias}.stock_id
-                    AND {alias}.metric_name = '{metric}'
                 """)
 
                 if isinstance(bounds, dict):
@@ -234,7 +245,7 @@ class PatternEngine:
         # Build joins string
         joins_str = ' '.join(joins) if joins else ''
 
-        # Query with all fundamental metrics
+        # Query with all fundamental metrics (using most recent values)
         query = f"""
             SELECT DISTINCT
                 fd.stock_id,
@@ -247,19 +258,19 @@ class PatternEngine:
                 fd.cf_operating,
                 fd.cf_investing,
                 fd.cf_financing,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'peg_ratio' LIMIT 1) as peg_ratio,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'ps_ratio' LIMIT 1) as ps_ratio,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'revenue_growth_yoy' LIMIT 1) as revenue_growth_yoy,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'eps_growth_yoy' LIMIT 1) as eps_growth_yoy,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'roic' LIMIT 1) as roic,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'piotroski_score' LIMIT 1) as piotroski_score,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'altman_z_score' LIMIT 1) as altman_z_score,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'ev_ebitda' LIMIT 1) as ev_ebitda,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'current_ratio' LIMIT 1) as current_ratio,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'quick_ratio' LIMIT 1) as quick_ratio,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'debt_to_assets' LIMIT 1) as debt_to_assets,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'cash_ratio' LIMIT 1) as cash_ratio,
-                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'market_cap' LIMIT 1) as market_cap
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'peg_ratio' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as peg_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'ps_ratio' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as ps_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'revenue_growth_yoy' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as revenue_growth_yoy,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'eps_growth_yoy' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as eps_growth_yoy,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'roic' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as roic,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'piotroski_score' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as piotroski_score,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'altman_z_score' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as altman_z_score,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'ev_ebitda' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as ev_ebitda,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'current_ratio' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as current_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'quick_ratio' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as quick_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'debt_to_assets' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as debt_to_assets,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'cash_ratio' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as cash_ratio,
+                (SELECT value FROM fundamental_metrics WHERE stock_id = fd.stock_id AND metric_name = 'market_cap' ORDER BY year DESC, quarter DESC, calculated_at DESC LIMIT 1) as market_cap
             FROM fundamental_data fd
             {joins_str}
             WHERE {' AND '.join(conditions)}
@@ -348,8 +359,9 @@ class PatternEngine:
             signal_names = [s['signal_name'].lower() for s in signals]
 
             # Check if stock has any of the required signals
+            # Normalize both sides to lowercase for matching
             has_required_signal = any(
-                sig.replace('_', ' ') in ' '.join(signal_names)
+                sig.lower() in ' '.join(signal_names)
                 for sig in required_signals
             )
 
