@@ -979,6 +979,72 @@ def analyze_stock(stock_id):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/stocks/<stock_id>/ohlc', methods=['GET'])
+def get_stock_ohlc(stock_id):
+    """
+    Get OHLC data for a stock
+
+    Args:
+        stock_id: Stock symbol/code
+        days: Number of days to fetch (default: 90, max: 365)
+
+    Returns:
+        {
+            "stock_id": "BBCA",
+            "data": [
+                {
+                    "date": "2024-01-01",
+                    "open": 100.0,
+                    "high": 105.0,
+                    "low": 98.0,
+                    "close": 102.0,
+                    "volume": 1000000
+                },
+                ...
+            ]
+        }
+    """
+    try:
+        days = min(int(request.args.get('days', 90)), 365)
+
+        conn = storage._get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT date, open, high, low, close, volume
+            FROM price_data
+            WHERE stock_id = ?
+            ORDER BY date DESC
+            LIMIT ?
+        """, (stock_id.upper(), days))
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            return jsonify({'error': 'No price data found for this stock'}), 404
+
+        # Reverse to get chronological order
+        data = []
+        for row in reversed(rows):
+            data.append({
+                'date': row['date'],
+                'open': row['open'],
+                'high': row['high'],
+                'low': row['low'],
+                'close': row['close'],
+                'volume': row['volume']
+            })
+
+        return jsonify({
+            'stock_id': stock_id.upper(),
+            'data': data
+        })
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health():
     """Health check endpoint"""

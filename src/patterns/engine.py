@@ -263,7 +263,6 @@ class PatternEngine:
             FROM fundamental_data fd
             {joins_str}
             WHERE {' AND '.join(conditions)}
-            LIMIT 100
         """
 
         cursor.execute(query, params)

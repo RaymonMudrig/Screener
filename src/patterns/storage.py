@@ -228,6 +228,10 @@ class PatternStorage:
 
             conn.commit()
             conn.close()
+
+            # Clear cache for this pattern since it's new
+            self.clear_pattern_cache(pattern_data['pattern_id'])
+
             return True
 
         except sqlite3.IntegrityError as e:
@@ -296,6 +300,9 @@ class PatternStorage:
         cursor.execute(query, tuple(update_values))
         conn.commit()
         conn.close()
+
+        # Clear cache for this pattern since it was modified
+        self.clear_pattern_cache(pattern_id)
 
         return True
 

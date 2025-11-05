@@ -3,192 +3,166 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IDX Stock Screener - Pattern System</title>
+    <title>IDX Stock Screener</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23667eea' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cline x1='2' y1='20' x2='2' y2='14'/%3E%3Cline x1='7' y1='20' x2='7' y2='10'/%3E%3Cline x1='12' y1='20' x2='12' y2='6'/%3E%3Cline x1='17' y1='20' x2='17' y2='12'/%3E%3Cline x1='22' y1='20' x2='22' y2='8'/%3E%3Cpath d='M2 4l5 5 5-5 5 5 5-5'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
     <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <h1>📊 IDX Stock Screener</h1>
-            <p class="subtitle">Pattern-Based Screening System</p>
-        </header>
+        <!-- Top Panel -->
+        <div class="top-panel">
+            <select id="pattern-dropdown" class="pattern-select">
+                <option value="">Loading patterns...</option>
+            </select>
 
-        <!-- Pattern Selector Section -->
-        <section class="pattern-selector">
-            <div class="selector-header">
-                <h2>Select Pattern</h2>
-                <div class="pattern-stats">
-                    <span id="pattern-count">Loading...</span>
+            <button id="run-btn" class="btn btn-primary" disabled>
+                ▶ Run
+            </button>
+            <button id="add-pattern-btn" class="btn btn-success">
+                ➕ Add
+            </button>
+            <button id="edit-pattern-btn" class="btn btn-secondary" disabled>
+                ✏️ Edit
+            </button>
+            <button id="delete-pattern-btn" class="btn btn-danger" disabled>
+                🗑️ Delete
+            </button>
+        </div>
+
+        <!-- Content Area -->
+        <div class="content-area">
+            <!-- Tab Bar -->
+            <div class="tab-bar">
+                <div class="tab-buttons">
+                    <button class="tab-btn active" data-tab="pattern">Pattern Results</button>
+                    <!-- Stock tabs will be added dynamically -->
+                </div>
+                <div class="stock-input-container">
+                    <input type="text" id="stock-input" class="stock-input-compact"
+                           placeholder="Stock code" maxlength="6">
+                    <button id="analyze-btn" class="btn btn-primary btn-compact">🔍</button>
                 </div>
             </div>
 
-            <div class="selector-controls">
-                <select id="pattern-dropdown" class="pattern-select">
-                    <option value="">Loading patterns...</option>
-                </select>
+            <!-- Tab Contents -->
+            <div class="tab-contents">
+                <!-- Pattern Tab Content -->
+                <div class="tab-content active" id="pattern-tab">
 
-                <div class="button-group">
-                    <button id="run-btn" class="btn btn-primary" disabled>
-                        ▶ Run Screen
-                    </button>
-                    <button id="details-btn" class="btn btn-secondary" disabled>
-                        ℹ Details
-                    </button>
-                </div>
-            </div>
-
-            <!-- Pattern Management Buttons -->
-            <div class="pattern-management">
-                <button id="add-pattern-btn" class="btn btn-success">
-                    ➕ Add Pattern
-                </button>
-                <button id="edit-pattern-btn" class="btn btn-secondary" disabled>
-                    ✏️ Edit
-                </button>
-                <button id="delete-pattern-btn" class="btn btn-danger" disabled>
-                    🗑️ Delete
-                </button>
-            </div>
-
-            <!-- Pattern Details Panel -->
-            <div id="pattern-details" class="pattern-details" style="display: none;">
-                <div class="details-header">
-                    <h3 id="details-name">Pattern Details</h3>
-                    <button id="close-details" class="btn-close">×</button>
-                </div>
-                <p id="details-description" class="details-description"></p>
-
-                <div class="criteria-section">
-                    <div class="criteria-column">
-                        <h4>🔧 Technical Criteria</h4>
-                        <div id="details-technical" class="criteria-content">
-                            No technical criteria
-                        </div>
-                    </div>
-
-                    <div class="criteria-column">
-                        <h4>📊 Fundamental Criteria</h4>
-                        <div id="details-fundamental" class="criteria-content">
-                            No fundamental criteria
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Custom Pattern Editor Modal -->
-            <div id="pattern-editor-modal" class="modal" style="display: none;">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h3 id="editor-title">Create Custom Pattern</h3>
-                        <button id="close-editor" class="btn-close">×</button>
-                    </div>
-
-                    <div class="modal-body">
-                        <!-- Basic Info -->
-                        <div class="form-section">
-                            <h4>Basic Information</h4>
-
-                            <div class="form-group">
-                                <label for="pattern-name">Pattern Name *</label>
-                                <input type="text" id="pattern-name" class="form-input" placeholder="My Custom Strategy" required>
+                    <!-- Pattern Info -->
+                    <div id="pattern-info" class="pattern-info">
+                        <div class="info-header">
+                            <div class="info-left">
+                                <strong id="pattern-name"></strong>
+                                <span id="pattern-category" class="badge"></span>
                             </div>
-
-                            <div class="form-group">
-                                <label for="pattern-category">Category *</label>
-                                <select id="pattern-category" class="form-input" required>
-                                    <option value="custom">Custom</option>
-                                    <option value="value">Value</option>
-                                    <option value="growth">Growth</option>
-                                    <option value="quality">Quality</option>
-                                    <option value="health">Financial Health</option>
-                                    <option value="technical">Technical</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label for="pattern-description">Description</label>
-                                <textarea id="pattern-description" class="form-input" rows="3" placeholder="Describe your screening strategy..."></textarea>
+                            <div class="info-right">
+                                <span id="pattern-description" class="info-description"></span>
                             </div>
                         </div>
-
-                        <!-- Technical Signals -->
-                        <div class="form-section">
-                            <h4>Technical Signals</h4>
-                            <p class="section-hint">Select which technical signals to look for</p>
-
-                            <div class="signals-grid" id="signals-grid">
-                                <!-- Will be populated by JavaScript -->
+                        <div class="criteria-grid">
+                            <div>
+                                <strong>Technical:</strong>
+                                <div id="details-technical" class="criteria-list"></div>
                             </div>
-
-                            <div class="form-group">
-                                <label for="min-signal-strength">Minimum Signal Strength (0-100)</label>
-                                <input type="number" id="min-signal-strength" class="form-input" min="0" max="100" value="70">
-                            </div>
-                        </div>
-
-                        <!-- Fundamental Metrics -->
-                        <div class="form-section">
-                            <h4>Fundamental Metrics</h4>
-                            <p class="section-hint">Set ranges for fundamental metrics</p>
-
-                            <div class="metrics-container" id="metrics-container">
-                                <!-- Will be populated by JavaScript -->
+                            <div>
+                                <strong>Fundamental:</strong>
+                                <div id="details-fundamental" class="criteria-list"></div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="modal-footer">
-                        <button id="cancel-editor-btn" class="btn btn-secondary">Cancel</button>
-                        <button id="save-pattern-btn" class="btn btn-primary">Save Pattern</button>
+                    <!-- Loading Indicator -->
+                    <div id="loading" class="loading" style="display: none;">
+                        <div class="spinner"></div>
+                        <p>Screening stocks...</p>
+                    </div>
+
+                    <!-- Results -->
+                    <div class="results-header">
+                        <span id="results-count"></span>
+                        <span id="execution-time"></span>
+                    </div>
+                    <div id="results-container" class="results-container">
+                        <div class="placeholder">
+                            <p>👆 Select a pattern and click "Run" to see results</p>
+                        </div>
                     </div>
                 </div>
+
+                <!-- Stock Analyzer Tabs (dynamically created) -->
             </div>
-        </section>
+        </div>
 
-        <!-- Stock Analyzer Section -->
-        <section class="stock-analyzer">
-            <div class="analyzer-header">
-                <h2>Stock Analyzer</h2>
-                <p class="analyzer-subtitle">Enter a stock code to see all signals and fundamentals</p>
-            </div>
+        <!-- Custom Pattern Editor Modal (Hidden - Used as template only) -->
+        <div id="pattern-editor-modal" class="modal" style="display: none !important;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3 id="editor-title">Create Custom Pattern</h3>
+                    <button id="close-editor" class="btn-close">×</button>
+                </div>
 
-            <div class="analyzer-controls">
-                <input type="text"
-                       id="stock-input"
-                       class="stock-input"
-                       placeholder="Enter stock code (e.g., BBCA, TLKM, ASII)"
-                       maxlength="6">
+                <div class="modal-body">
+                    <!-- Basic Info -->
+                    <div class="form-section">
+                        <h4>Basic Information</h4>
 
-                <button id="analyze-btn" class="btn btn-primary">
-                    🔍 Analyze Stock
-                </button>
-            </div>
-        </section>
+                        <div class="form-group">
+                            <label for="pattern-name-input">Pattern Name *</label>
+                            <input type="text" id="pattern-name-input" class="form-input" placeholder="My Custom Strategy" required>
+                        </div>
 
-        <!-- Results Section -->
-        <section class="results-section">
-            <div class="results-header">
-                <h2>Screening Results</h2>
-                <div class="results-info">
-                    <span id="results-count" class="results-count">No results yet</span>
-                    <span id="execution-time" class="execution-time"></span>
+                        <div class="form-group">
+                            <label for="pattern-category-input">Category *</label>
+                            <select id="pattern-category-input" class="form-input" required>
+                                <option value="custom">Custom</option>
+                                <option value="value">Value</option>
+                                <option value="growth">Growth</option>
+                                <option value="quality">Quality</option>
+                                <option value="health">Financial Health</option>
+                                <option value="technical">Technical</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="pattern-description-input">Description</label>
+                            <textarea id="pattern-description-input" class="form-input" rows="3" placeholder="Describe your screening strategy..."></textarea>
+                        </div>
+                    </div>
+
+                    <!-- Technical Signals -->
+                    <div class="form-section">
+                        <h4>Technical Signals</h4>
+                        <p class="section-hint">Select which technical signals to look for</p>
+
+                        <div class="signals-grid" id="signals-grid">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+
+                        <div class="form-group">
+                            <label for="min-signal-strength">Minimum Signal Strength (0-100)</label>
+                            <input type="number" id="min-signal-strength" class="form-input" min="0" max="100" value="70">
+                        </div>
+                    </div>
+
+                    <!-- Fundamental Metrics -->
+                    <div class="form-section">
+                        <h4>Fundamental Metrics</h4>
+                        <p class="section-hint">Set ranges for fundamental metrics</p>
+
+                        <div class="metrics-container" id="metrics-container">
+                            <!-- Will be populated by JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button id="cancel-editor-btn" class="btn btn-secondary">Cancel</button>
+                    <button id="save-pattern-btn" class="btn btn-primary">Save Pattern</button>
                 </div>
             </div>
-
-            <!-- Loading Indicator -->
-            <div id="loading" class="loading" style="display: none;">
-                <div class="spinner"></div>
-                <p>Screening stocks...</p>
-            </div>
-
-            <!-- Results Table -->
-            <div id="results-container" class="results-container">
-                <div class="placeholder">
-                    <p>👆 Select a pattern and click "Run Screen" to see results</p>
-                </div>
-            </div>
-        </section>
+        </div>
     </div>
 
     <script src="app.js"></script>

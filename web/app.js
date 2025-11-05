@@ -15,18 +15,29 @@ let patterns = {
 };
 let selectedPattern = null;
 let currentResults = [];
+let stockTabs = [];  // Track stock analyzer tabs (max 4)
+let activeTab = 'pattern';  // Current active tab
+let editorTabOpen = false;  // Track if editor tab is open
 
 // DOM Elements
 const patternDropdown = document.getElementById('pattern-dropdown');
 const runBtn = document.getElementById('run-btn');
-const detailsBtn = document.getElementById('details-btn');
-const patternDetails = document.getElementById('pattern-details');
-const closeDetailsBtn = document.getElementById('close-details');
 const loadingIndicator = document.getElementById('loading');
 const resultsContainer = document.getElementById('results-container');
-const patternCount = document.getElementById('pattern-count');
 const resultsCount = document.getElementById('results-count');
 const executionTime = document.getElementById('execution-time');
+
+// Pattern Info Elements
+const patternInfo = document.getElementById('pattern-info');
+const patternName = document.getElementById('pattern-name');
+const patternCategory = document.getElementById('pattern-category');
+const patternDescription = document.getElementById('pattern-description');
+const detailsTechnical = document.getElementById('details-technical');
+const detailsFundamental = document.getElementById('details-fundamental');
+
+// Tab Elements
+const tabButtons = document.querySelector('.tab-buttons');
+const tabContents = document.querySelector('.tab-contents');
 
 // Stock Analyzer Elements
 const stockInput = document.getElementById('stock-input');
@@ -36,11 +47,6 @@ const analyzeBtn = document.getElementById('analyze-btn');
 const addPatternBtn = document.getElementById('add-pattern-btn');
 const editPatternBtn = document.getElementById('edit-pattern-btn');
 const deletePatternBtn = document.getElementById('delete-pattern-btn');
-const patternEditorModal = document.getElementById('pattern-editor-modal');
-const closeEditorBtn = document.getElementById('close-editor');
-const cancelEditorBtn = document.getElementById('cancel-editor-btn');
-const savePatternBtn = document.getElementById('save-pattern-btn');
-const editorTitle = document.getElementById('editor-title');
 
 // Editor State
 let editorMode = 'create'; // 'create' or 'edit'
@@ -51,22 +57,190 @@ document.addEventListener('DOMContentLoaded', () => {
     loadPatterns();
     setupEventListeners();
     initializePatternEditor();
+
+    // Remove the modal template from DOM after initialization to avoid duplicate IDs
+    // We only use it as a template for cloning
+    const modalTemplate = document.getElementById('pattern-editor-modal');
+    if (modalTemplate && modalTemplate.parentNode) {
+        // Store the template HTML before removing
+        window.editorModalTemplate = modalTemplate.cloneNode(true);
+        modalTemplate.remove();
+    }
 });
+
+// Tab Management Functions
+function switchTab(tabId) {
+    // Update active tab state
+    activeTab = tabId;
+
+    // Update tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
+    });
+
+    // Update tab contents
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.toggle('active', content.id === `${tabId}-tab`);
+    });
+}
+
+function createStockTab(stockCode, data) {
+    // Remove oldest tab if we have 4 already
+    if (stockTabs.length >= 4) {
+        const oldestTab = stockTabs.shift();
+        removeStockTab(oldestTab);
+    }
+
+    stockTabs.push(stockCode);
+
+    // Create tab button
+    const tabBtn = document.createElement('button');
+    tabBtn.className = 'tab-btn';
+    tabBtn.dataset.tab = stockCode;
+    tabBtn.innerHTML = `${stockCode} <span class="tab-btn-close" onclick="event.stopPropagation(); closeStockTab('${stockCode}')">×</span>`;
+    tabBtn.addEventListener('click', () => switchTab(stockCode));
+    tabButtons.appendChild(tabBtn);
+
+    // Create tab content
+    const tabContent = document.createElement('div');
+    tabContent.className = 'tab-content';
+    tabContent.id = `${stockCode}-tab`;
+    tabContent.innerHTML = data;
+    tabContents.appendChild(tabContent);
+
+    // Switch to the new tab
+    switchTab(stockCode);
+
+    // Render the price chart after tab is displayed (use unique container ID)
+    setTimeout(() => renderStockChart(stockCode, `price-chart-${stockCode}`), 100);
+}
+
+function closeStockTab(stockCode) {
+    stockTabs = stockTabs.filter(code => code !== stockCode);
+    removeStockTab(stockCode);
+
+    // Switch to pattern tab if closing active tab
+    if (activeTab === stockCode) {
+        switchTab('pattern');
+    }
+}
+
+// Make closeStockTab globally accessible for onclick handlers
+window.closeStockTab = closeStockTab;
+
+function removeStockTab(stockCode) {
+    // Remove tab button
+    const tabBtn = tabButtons.querySelector(`[data-tab="${stockCode}"]`);
+    if (tabBtn) tabBtn.remove();
+
+    // Remove tab content
+    const tabContent = document.getElementById(`${stockCode}-tab`);
+    if (tabContent) tabContent.remove();
+}
+
+// Create Editor Tab
+function createEditorTab(title) {
+    // Close existing editor tab if open
+    if (editorTabOpen) {
+        closeEditorTab();
+    }
+
+    editorTabOpen = true;
+
+    // Create tab button
+    const tabBtn = document.createElement('button');
+    tabBtn.className = 'tab-btn';
+    tabBtn.dataset.tab = 'editor';
+    tabBtn.innerHTML = `${title} <span class="tab-btn-close" onclick="event.stopPropagation(); closeEditorTab()">×</span>`;
+    tabBtn.addEventListener('click', () => switchTab('editor'));
+    tabButtons.appendChild(tabBtn);
+
+    // Clone the modal content from stored template to create tab content
+    const modalContent = window.editorModalTemplate.querySelector('.modal-content');
+    const tabContent = document.createElement('div');
+    tabContent.className = 'tab-content';
+    tabContent.id = 'editor-tab';
+    tabContent.innerHTML = `
+        <div class="editor-tab-container">
+            ${modalContent.innerHTML}
+        </div>
+    `;
+    tabContents.appendChild(tabContent);
+
+    // Re-attach event listeners for buttons in the cloned content
+    const editorTab = document.getElementById('editor-tab');
+    editorTab.querySelector('#close-editor').addEventListener('click', closeEditorTab);
+    editorTab.querySelector('#cancel-editor-btn').addEventListener('click', closeEditorTab);
+    editorTab.querySelector('#save-pattern-btn').addEventListener('click', savePattern);
+
+    // Re-initialize metric checkbox event listeners
+    editorTab.querySelectorAll('.metric-control').forEach(metricControl => {
+        const checkbox = metricControl.querySelector('input[type="checkbox"]');
+        const metricId = checkbox.getAttribute('data-metric');
+        const minInput = metricControl.querySelector(`#metric-${metricId}-min`);
+        const maxInput = metricControl.querySelector(`#metric-${metricId}-max`);
+
+        checkbox.addEventListener('change', () => {
+            const isEnabled = checkbox.checked;
+            metricControl.classList.toggle('enabled', isEnabled);
+            minInput.disabled = !isEnabled;
+            maxInput.disabled = !isEnabled;
+
+            if (isEnabled) {
+                // Set default values when enabled
+                const metric = AVAILABLE_METRICS.find(m => m.id === metricId);
+                if (metric) {
+                    minInput.value = metric.defaultMin;
+                    maxInput.value = metric.defaultMax;
+                }
+            }
+        });
+    });
+
+    // Re-initialize signal checkbox visual state handlers
+    editorTab.querySelectorAll('.signal-checkbox-group input[type="checkbox"]').forEach(checkbox => {
+        checkbox.addEventListener('change', () => {
+            checkbox.closest('.signal-checkbox-group').classList.toggle('selected', checkbox.checked);
+        });
+    });
+
+    // Switch to editor tab
+    switchTab('editor');
+}
+window.closeEditorTab = closeEditorTab;
+
+// Close Editor Tab
+function closeEditorTab() {
+    if (!editorTabOpen) return;
+
+    editorTabOpen = false;
+
+    // Remove tab button
+    const tabBtn = tabButtons.querySelector('[data-tab="editor"]');
+    if (tabBtn) tabBtn.remove();
+
+    // Remove tab content
+    const tabContent = document.getElementById('editor-tab');
+    if (tabContent) tabContent.remove();
+
+    // Switch back to pattern tab
+    switchTab('pattern');
+}
 
 // Setup Event Listeners
 function setupEventListeners() {
     patternDropdown.addEventListener('change', handlePatternChange);
     runBtn.addEventListener('click', runScreening);
-    detailsBtn.addEventListener('click', showPatternDetails);
-    closeDetailsBtn.addEventListener('click', hidePatternDetails);
+
+    // Setup initial tab click handlers
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+    });
 
     // Pattern Editor
     addPatternBtn.addEventListener('click', openEditorForCreate);
     editPatternBtn.addEventListener('click', openEditorForEdit);
     deletePatternBtn.addEventListener('click', deletePattern);
-    closeEditorBtn.addEventListener('click', closePatternEditor);
-    cancelEditorBtn.addEventListener('click', closePatternEditor);
-    savePatternBtn.addEventListener('click', savePattern);
 
     // Stock Analyzer
     analyzeBtn.addEventListener('click', analyzeStock);
@@ -84,9 +258,6 @@ async function loadPatterns() {
         const data = await response.json();
 
         patterns = data;
-
-        // Update pattern count
-        patternCount.textContent = `${data.counts.preset} presets, ${data.counts.custom} custom (${data.counts.total} total)`;
 
         // Populate dropdown
         populatePatternDropdown();
@@ -137,17 +308,15 @@ async function handlePatternChange(e) {
 
     if (!patternId) {
         runBtn.disabled = true;
-        detailsBtn.disabled = true;
         editPatternBtn.disabled = true;
         deletePatternBtn.disabled = true;
         selectedPattern = null;
-        hidePatternDetails();
+        patternInfo.style.display = 'none';
         return;
     }
 
     // Enable buttons
     runBtn.disabled = false;
-    detailsBtn.disabled = false;
 
     // Load pattern details
     try {
@@ -158,76 +327,64 @@ async function handlePatternChange(e) {
         const isCustom = !selectedPattern.is_preset;
         editPatternBtn.disabled = !isCustom;
         deletePatternBtn.disabled = !isCustom;
+
+        // Display pattern info
+        displayPatternInfo(selectedPattern);
+
+        // Automatically run screening
+        runScreening();
     } catch (error) {
         console.error('Error loading pattern details:', error);
         showError('Failed to load pattern details.');
     }
 }
 
-// Show Pattern Details
-function showPatternDetails() {
-    if (!selectedPattern) return;
-
-    // Set title and description
-    document.getElementById('details-name').textContent = selectedPattern.pattern_name;
-    document.getElementById('details-description').textContent = selectedPattern.description || 'No description available.';
+// Display Pattern Info
+function displayPatternInfo(pattern) {
+    patternInfo.style.display = 'block';
+    patternName.textContent = pattern.pattern_name || '';
+    patternCategory.textContent = pattern.category || 'General';
+    patternDescription.textContent = (pattern.description && pattern.description !== 'null') ? pattern.description : 'No description available.';
 
     // Technical criteria
-    const technicalDiv = document.getElementById('details-technical');
-    const techCriteria = selectedPattern.technical_criteria || {};
-
+    const techCriteria = pattern.technical_criteria || {};
     if (Object.keys(techCriteria).length === 0) {
-        technicalDiv.innerHTML = '<p style="color: #999;">No technical criteria</p>';
+        detailsTechnical.innerHTML = '<span style="color: #999;">None</span>';
     } else {
-        let techHtml = '<ul>';
-
+        let techHtml = '';
         if (techCriteria.signals && techCriteria.signals.length > 0) {
-            techHtml += '<li><strong>Required Signals:</strong><br>';
-            techHtml += techCriteria.signals.map(s => `• ${formatSignalName(s)}`).join('<br>');
-            techHtml += '</li>';
+            techHtml += techCriteria.signals.join(', ');
         }
-
         if (techCriteria.min_signal_strength) {
-            techHtml += `<li><strong>Minimum Strength:</strong> ${techCriteria.min_signal_strength}</li>`;
+            techHtml += ` (min strength: ${techCriteria.min_signal_strength})`;
         }
-
-        techHtml += '</ul>';
-        technicalDiv.innerHTML = techHtml;
+        detailsTechnical.innerHTML = techHtml || '<span style="color: #999;">None</span>';
     }
 
     // Fundamental criteria
-    const fundamentalDiv = document.getElementById('details-fundamental');
-    const fundCriteria = selectedPattern.fundamental_criteria || {};
-
+    const fundCriteria = pattern.fundamental_criteria || {};
     if (Object.keys(fundCriteria).length === 0) {
-        fundamentalDiv.innerHTML = '<p style="color: #999;">No fundamental criteria</p>';
+        detailsFundamental.innerHTML = '<span style="color: #999;">None</span>';
     } else {
-        let fundHtml = '<ul>';
+        let fundHtml = '';
+        for (const [metric, range] of Object.entries(fundCriteria)) {
+            const displayMetric = metric.replace(/_/g, ' ').toUpperCase();
+            const hasMin = range.min !== undefined && range.min !== null;
+            const hasMax = range.max !== undefined && range.max !== null && range.max !== 999 && range.max !== 999999999999;
 
-        for (const [key, value] of Object.entries(fundCriteria)) {
-            const label = formatMetricName(key);
-
-            if (typeof value === 'object' && value !== null) {
-                const min = value.min !== undefined ? value.min : '-';
-                const max = value.max !== undefined && value.max !== 999 && value.max !== null ? value.max : 'No limit';
-                fundHtml += `<li><strong>${label}:</strong> ${min} to ${max}</li>`;
-            } else {
-                fundHtml += `<li><strong>${label}:</strong> ${value}</li>`;
+            if (hasMin && hasMax) {
+                fundHtml += `${displayMetric}: ${range.min} - ${range.max}, `;
+            } else if (hasMin) {
+                fundHtml += `${displayMetric}: ≥ ${range.min}, `;
+            } else if (hasMax) {
+                fundHtml += `${displayMetric}: ≤ ${range.max}, `;
             }
         }
-
-        fundHtml += '</ul>';
-        fundamentalDiv.innerHTML = fundHtml;
+        detailsFundamental.innerHTML = fundHtml.slice(0, -2) || '<span style="color: #999;">None</span>';
     }
-
-    // Show panel
-    patternDetails.style.display = 'block';
 }
 
-// Hide Pattern Details
-function hidePatternDetails() {
-    patternDetails.style.display = 'none';
-}
+// Old pattern details functions removed - now using inline display
 
 // Run Screening
 async function runScreening() {
@@ -240,14 +397,15 @@ async function runScreening() {
     executionTime.textContent = '';
 
     try {
+        // Always run fresh - no cache (data changes intraday)
         const response = await fetch(`${API_BASE}/api/patterns/${selectedPattern.pattern_id}/run`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-                limit: 50,
-                use_cache: true
+                limit: 100,
+                use_cache: false  // Always fresh results
             })
         });
 
@@ -307,7 +465,7 @@ function displayResults(data) {
 
         html += `
             <tr>
-                <td><span class="stock-symbol">${result.stock_id}</span></td>
+                <td><span class="stock-symbol stock-link" onclick="analyzeStockById('${result.stock_id}')" title="Click to analyze ${result.stock_id}">${result.stock_id}</span></td>
                 <td><span class="score-badge ${scoreClass}">${result.match_score}/100</span></td>
                 <td class="signals-list">${signalsHtml}</td>
                 <td>${fundamentalsHtml}</td>
@@ -454,6 +612,126 @@ function showError(message) {
 // =============================================================================
 
 // Analyze Stock
+// Analyze Stock by ID (can be called directly)
+async function analyzeStockById(stockId) {
+    if (!stockId) {
+        showError('Please enter a stock code');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/api/stocks/${stockId}/analysis`);
+        const data = await response.json();
+
+        if (response.ok) {
+            // Create tab with stock analysis
+            const analysisHtml = generateStockAnalysisHtml(data, stockId);
+            createStockTab(stockId, analysisHtml);
+        } else {
+            throw new Error(data.error || 'Failed to analyze stock');
+        }
+
+    } catch (error) {
+        console.error('Error analyzing stock:', error);
+        showError(`Failed to analyze ${stockId}: ${error.message}`);
+    }
+}
+// Make globally accessible for onclick handlers
+window.analyzeStockById = analyzeStockById;
+
+// Render Stock Price Chart
+async function renderStockChart(stockId, containerId) {
+    try {
+        // Fetch OHLC data
+        const response = await fetch(`${API_BASE}/api/stocks/${stockId}/ohlc?days=90`);
+        const data = await response.json();
+
+        if (!response.ok) {
+            console.error('Failed to fetch OHLC data:', data.error);
+            return;
+        }
+
+        // Find the chart container
+        const chartContainer = document.getElementById(containerId);
+        if (!chartContainer) {
+            console.error('Chart container not found:', containerId);
+            return;
+        }
+
+        // Create chart (v3.8.0 API uses window.LightweightCharts)
+        const chart = window.LightweightCharts.createChart(chartContainer, {
+            width: chartContainer.clientWidth,
+            height: 300,
+            layout: {
+                backgroundColor: '#ffffff',
+                textColor: '#333',
+            },
+            grid: {
+                vertLines: { color: '#e0e0e0' },
+                horzLines: { color: '#e0e0e0' },
+            },
+            timeScale: {
+                borderColor: '#cccccc',
+            },
+        });
+
+        // Add candlestick series
+        const candlestickSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a',
+            downColor: '#ef5350',
+            borderVisible: false,
+            wickUpColor: '#26a69a',
+            wickDownColor: '#ef5350',
+        });
+
+        // Add volume series
+        const volumeSeries = chart.addHistogramSeries({
+            color: '#26a69a',
+            priceFormat: {
+                type: 'volume',
+            },
+            priceScaleId: '',
+            scaleMargins: {
+                top: 0.8,
+                bottom: 0,
+            },
+        });
+
+        // Prepare data
+        const candleData = data.data.map(d => ({
+            time: d.date,
+            open: d.open,
+            high: d.high,
+            low: d.low,
+            close: d.close,
+        }));
+
+        const volumeData = data.data.map(d => ({
+            time: d.date,
+            value: d.volume,
+            color: d.close >= d.open ? '#26a69a80' : '#ef535080',
+        }));
+
+        // Set data
+        candlestickSeries.setData(candleData);
+        volumeSeries.setData(volumeData);
+
+        // Fit content
+        chart.timeScale().fitContent();
+
+        // Handle resize
+        const resizeObserver = new ResizeObserver(entries => {
+            if (entries.length === 0 || entries[0].target !== chartContainer) return;
+            const newRect = entries[0].contentRect;
+            chart.applyOptions({ width: newRect.width });
+        });
+        resizeObserver.observe(chartContainer);
+
+    } catch (error) {
+        console.error('Error rendering chart:', error);
+    }
+}
+
 async function analyzeStock() {
     const stockId = stockInput.value.trim().toUpperCase();
 
@@ -462,36 +740,28 @@ async function analyzeStock() {
         return;
     }
 
-    // Show loading
-    loadingIndicator.style.display = 'block';
-    resultsContainer.innerHTML = '';
-    resultsCount.textContent = `Analyzing ${stockId}...`;
-    executionTime.textContent = '';
+    // Disable button during loading
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = '⏳';
 
     try {
-        const response = await fetch(`${API_BASE}/api/stocks/${stockId}/analysis`);
-        const data = await response.json();
-
-        if (response.ok) {
-            displayStockAnalysis(data);
-        } else {
-            throw new Error(data.error || 'Failed to analyze stock');
-        }
-
-    } catch (error) {
-        console.error('Error analyzing stock:', error);
-        showError(`Failed to analyze ${stockId}: ${error.message}`);
+        await analyzeStockById(stockId);
+        // Clear input on success
+        stockInput.value = '';
     } finally {
-        loadingIndicator.style.display = 'none';
+        analyzeBtn.disabled = false;
+        analyzeBtn.textContent = '🔍';
     }
 }
 
-// Display Stock Analysis
-function displayStockAnalysis(data) {
-    resultsCount.textContent = `Analysis: ${data.stock_id}`;
-    executionTime.textContent = '';
+// Generate Stock Analysis HTML
+function generateStockAnalysisHtml(data, stockId) {
+    return `
+        <!-- Price Chart -->
+        <div class="chart-container">
+            <div id="price-chart-${stockId}" class="price-chart"></div>
+        </div>
 
-    let html = `
         <div class="analysis-grid">
             <!-- Signals Card -->
             <div class="analysis-card">
@@ -547,8 +817,6 @@ function displayStockAnalysis(data) {
             </div>
         </div>
     `;
-
-    resultsContainer.innerHTML = html;
 }
 
 // Format Fundamental Metrics for Display
@@ -655,7 +923,7 @@ const AVAILABLE_METRICS = [
     { id: 'debt_to_assets', name: 'Debt/Assets', defaultMin: 0, defaultMax: 0.4 },
     { id: 'debt_to_equity', name: 'Debt/Equity', defaultMin: 0, defaultMax: 1.0 },
     { id: 'cash_ratio', name: 'Cash Ratio', defaultMin: 0.5, defaultMax: 999 },
-    { id: 'piotroski_score', name: 'Piotroski F-Score', defaultMin: 7, defaultMax: 9 },
+    { id: 'piotroski_score', name: 'Piotroski F-Score', defaultMin: 7, defaultMax: 999 },
     { id: 'altman_z_score', name: 'Altman Z-Score', defaultMin: 3.0, defaultMax: 999 },
     { id: 'market_cap', name: 'Market Cap', defaultMin: 1000000000, defaultMax: 999999999999 }
 ];
@@ -738,27 +1006,32 @@ function initializePatternEditor() {
 function openEditorForCreate() {
     editorMode = 'create';
     editingPatternId = null;
-    editorTitle.textContent = 'Create Custom Pattern';
+
+    // Create editor tab first
+    createEditorTab('➕ Create Pattern');
+
+    // Now manipulate the form in the created tab
+    const editorTab = document.getElementById('editor-tab');
+
+    // Update title
+    editorTab.querySelector('#editor-title').textContent = 'Create Custom Pattern';
 
     // Reset form
-    document.getElementById('pattern-name').value = '';
-    document.getElementById('pattern-category').value = 'custom';
-    document.getElementById('pattern-description').value = '';
-    document.getElementById('min-signal-strength').value = '70';
+    editorTab.querySelector('#pattern-name-input').value = '';
+    editorTab.querySelector('#pattern-category-input').value = 'custom';
+    editorTab.querySelector('#pattern-description-input').value = '';
+    editorTab.querySelector('#min-signal-strength').value = '70';
 
     // Reset all checkboxes
-    document.querySelectorAll('.signal-checkbox-group input[type="checkbox"]').forEach(cb => {
+    editorTab.querySelectorAll('.signal-checkbox-group input[type="checkbox"]').forEach(cb => {
         cb.checked = false;
         cb.closest('.signal-checkbox-group').classList.remove('selected');
     });
 
-    document.querySelectorAll('.metric-control input[type="checkbox"]').forEach(cb => {
+    editorTab.querySelectorAll('.metric-control input[type="checkbox"]').forEach(cb => {
         cb.checked = false;
         cb.dispatchEvent(new Event('change')); // Trigger to disable inputs
     });
-
-    // Show modal
-    patternEditorModal.style.display = 'flex';
 }
 
 // Open Editor for Editing Existing Pattern
@@ -770,22 +1043,30 @@ async function openEditorForEdit() {
 
     editorMode = 'edit';
     editingPatternId = selectedPattern.pattern_id;
-    editorTitle.textContent = 'Edit Custom Pattern';
+
+    // Create editor tab first
+    createEditorTab('✏️ Edit Pattern');
+
+    // Now manipulate the form in the created tab
+    const editorTab = document.getElementById('editor-tab');
+
+    // Update title
+    editorTab.querySelector('#editor-title').textContent = 'Edit Custom Pattern';
 
     // Fill form with existing data
-    document.getElementById('pattern-name').value = selectedPattern.pattern_name;
-    document.getElementById('pattern-category').value = selectedPattern.category;
-    document.getElementById('pattern-description').value = selectedPattern.description || '';
+    editorTab.querySelector('#pattern-name-input').value = selectedPattern.pattern_name;
+    editorTab.querySelector('#pattern-category-input').value = selectedPattern.category;
+    editorTab.querySelector('#pattern-description-input').value = selectedPattern.description || '';
 
     // Technical criteria
     const techCriteria = selectedPattern.technical_criteria || {};
     const signals = techCriteria.signals || [];
     const minStrength = techCriteria.min_signal_strength || 70;
 
-    document.getElementById('min-signal-strength').value = minStrength;
+    editorTab.querySelector('#min-signal-strength').value = minStrength;
 
     // Reset and set signals
-    document.querySelectorAll('.signal-checkbox-group input[type="checkbox"]').forEach(cb => {
+    editorTab.querySelectorAll('.signal-checkbox-group input[type="checkbox"]').forEach(cb => {
         const signalId = cb.getAttribute('data-signal');
         const isChecked = signals.includes(signalId);
         cb.checked = isChecked;
@@ -796,43 +1077,47 @@ async function openEditorForEdit() {
     const fundCriteria = selectedPattern.fundamental_criteria || {};
 
     // Reset all metrics
-    document.querySelectorAll('.metric-control input[type="checkbox"]').forEach(cb => {
+    editorTab.querySelectorAll('.metric-control input[type="checkbox"]').forEach(cb => {
         cb.checked = false;
         cb.dispatchEvent(new Event('change'));
     });
 
     // Set metrics that are defined
     for (const [metricId, values] of Object.entries(fundCriteria)) {
-        const checkbox = document.getElementById(`metric-${metricId}`);
+        const checkbox = editorTab.querySelector(`#metric-${metricId}`);
         if (checkbox) {
             checkbox.checked = true;
             checkbox.dispatchEvent(new Event('change'));
 
             if (values && typeof values === 'object') {
-                const minInput = document.getElementById(`metric-${metricId}-min`);
-                const maxInput = document.getElementById(`metric-${metricId}-max`);
+                const minInput = editorTab.querySelector(`#metric-${metricId}-min`);
+                const maxInput = editorTab.querySelector(`#metric-${metricId}-max`);
                 if (minInput && values.min !== undefined) minInput.value = values.min;
                 if (maxInput && values.max !== undefined) maxInput.value = values.max;
             }
         }
     }
-
-    // Show modal
-    patternEditorModal.style.display = 'flex';
 }
 
 // Close Pattern Editor
 function closePatternEditor() {
-    patternEditorModal.style.display = 'none';
+    closeEditorTab();
 }
 
 // Save Pattern
 async function savePattern() {
-    // Collect form data
-    const patternName = document.getElementById('pattern-name').value.trim();
-    const category = document.getElementById('pattern-category').value;
-    const description = document.getElementById('pattern-description').value.trim();
-    const minSignalStrength = parseInt(document.getElementById('min-signal-strength').value);
+    // Get the editor tab container to query elements from
+    const editorTab = document.getElementById('editor-tab');
+    if (!editorTab) {
+        console.error('Editor tab not found');
+        return;
+    }
+
+    // Collect form data from the editor tab
+    const patternName = editorTab.querySelector('#pattern-name-input').value.trim();
+    const category = editorTab.querySelector('#pattern-category-input').value;
+    const description = editorTab.querySelector('#pattern-description-input').value.trim();
+    const minSignalStrength = parseInt(editorTab.querySelector('#min-signal-strength').value);
 
     // Validate
     if (!patternName) {
@@ -840,18 +1125,18 @@ async function savePattern() {
         return;
     }
 
-    // Collect selected signals
+    // Collect selected signals from the editor tab
     const selectedSignals = [];
-    document.querySelectorAll('.signal-checkbox-group input[type="checkbox"]:checked').forEach(cb => {
+    editorTab.querySelectorAll('.signal-checkbox-group input[type="checkbox"]:checked').forEach(cb => {
         selectedSignals.push(cb.getAttribute('data-signal'));
     });
 
-    // Collect enabled metrics
+    // Collect enabled metrics from the editor tab
     const fundamentalCriteria = {};
-    document.querySelectorAll('.metric-control input[type="checkbox"]:checked').forEach(cb => {
+    editorTab.querySelectorAll('.metric-control input[type="checkbox"]:checked').forEach(cb => {
         const metricId = cb.getAttribute('data-metric');
-        const minInput = document.getElementById(`metric-${metricId}-min`);
-        const maxInput = document.getElementById(`metric-${metricId}-max`);
+        const minInput = editorTab.querySelector(`#metric-${metricId}-min`);
+        const maxInput = editorTab.querySelector(`#metric-${metricId}-max`);
 
         fundamentalCriteria[metricId] = {
             min: parseFloat(minInput.value) || 0,
