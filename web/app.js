@@ -18,6 +18,7 @@ let currentResults = [];
 let stockTabs = [];  // Track stock analyzer tabs (max 4)
 let activeTab = 'pattern';  // Current active tab
 let editorTabOpen = false;  // Track if editor tab is open
+let stockCharts = {};  // Store chart instances and data: { stockId: { chart, candleSeries, data, indicators: [] } }
 
 // DOM Elements
 const patternDropdown = document.getElementById('pattern-dropdown');
@@ -129,6 +130,25 @@ function closeStockTab(stockCode) {
 window.closeStockTab = closeStockTab;
 
 function removeStockTab(stockCode) {
+    // Clean up chart instances before removing DOM elements
+    const chartData = stockCharts[stockCode];
+    if (chartData) {
+        // Clear indicators first
+        clearIndicators(stockCode);
+
+        // Remove main chart
+        if (chartData.chart) {
+            try {
+                chartData.chart.remove();
+            } catch (e) {
+                // Silently ignore if already removed
+            }
+        }
+
+        // Delete from stockCharts to prevent further references
+        delete stockCharts[stockCode];
+    }
+
     // Remove tab button
     const tabBtn = tabButtons.querySelector(`[data-tab="${stockCode}"]`);
     if (tabBtn) tabBtn.remove();
@@ -822,6 +842,18 @@ async function renderStockChart(stockId, containerId) {
         // Fit content
         chart.timeScale().fitContent();
 
+        // Store chart instance and data for indicator drawing
+        stockCharts[stockId] = {
+            chart: chart,
+            candleSeries: candlestickSeries,
+            volumeSeries: volumeSeries,
+            data: candleData,
+            rawData: data.data,
+            indicators: [],
+            indicatorChart: null,
+            indicatorSeries: []
+        };
+
         // Handle resize
         const resizeObserver = new ResizeObserver(entries => {
             if (entries.length === 0 || entries[0].target !== chartContainer) return;
@@ -863,6 +895,7 @@ function generateStockAnalysisHtml(data, stockId) {
         <!-- Price Chart -->
         <div class="chart-container">
             <div id="price-chart-${stockId}" class="price-chart"></div>
+            <div id="indicator-chart-${stockId}" class="indicator-chart" style="display: none;"></div>
         </div>
 
         <div class="analysis-grid">
@@ -892,7 +925,7 @@ function generateStockAnalysisHtml(data, stockId) {
                 <div class="signal-list-detailed">
                     ${data.signals.length === 0 ? '<p style="color: #999;">No active signals found</p>' : ''}
                     ${data.signals.map(signal => `
-                        <div class="signal-detail-item ${signal.direction}">
+                        <div class="signal-detail-item ${signal.direction}" onclick="showSignalIndicator('${stockId}', '${signal.name.replace(/'/g, "\\'")}')" style="cursor: pointer;" title="Click to show indicator on chart">
                             <div class="signal-detail-header">
                                 <span class="signal-detail-name">${formatSignalName(signal.name)}</span>
                                 <span class="signal-detail-strength">
@@ -901,6 +934,7 @@ function generateStockAnalysisHtml(data, stockId) {
                             </div>
                             <div class="signal-detail-meta">
                                 ${signal.description || `Type: ${signal.type.toUpperCase()} | Direction: ${signal.direction.toUpperCase()}${signal.date ? ' | Date: ' + signal.date : ''}`}
+                                <span style="color: #667eea; font-size: 0.9em;"> 📊 Click to visualize</span>
                             </div>
                         </div>
                     `).join('')}
@@ -1337,3 +1371,722 @@ async function deletePattern() {
         alert(`Failed to delete pattern: ${error.message}`);
     }
 }
+
+// =============================================================================
+// INDICATOR VISUALIZATION FUNCTIONS
+// =============================================================================
+
+// Show indicator for a signal on chart
+function showSignalIndicator(stockId, signalName) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) {
+        console.error('Chart not found for stock:', stockId);
+        return;
+    }
+
+    // Remove previous indicators
+    clearIndicators(stockId);
+
+    // Normalize signal name to lowercase for matching
+    const normalizedSignal = signalName.toLowerCase();
+
+    // Map signals to their indicators
+    if (normalizedSignal.includes('golden') || normalizedSignal.includes('death') ||  normalizedSignal.includes('cross')) {
+        // Moving average crossovers: show SMA50 and SMA200
+        drawSMA(stockId, 50, '#2196F3');
+        drawSMA(stockId, 200, '#F44336');
+    } else if (normalizedSignal.includes('rsi')) {
+        // RSI signals: show RSI
+        drawRSI(stockId);
+    } else if (normalizedSignal.includes('macd')) {
+        // MACD signals: show MACD
+        drawMACD(stockId);
+    } else if (normalizedSignal.includes('mfi')) {
+        // MFI signals: show MFI
+        drawMFI(stockId);
+    } else if (normalizedSignal.includes('cci')) {
+        // CCI signals: show CCI
+        drawCCI(stockId);
+    } else if (normalizedSignal.includes('bollinger')) {
+        // Bollinger Band signals
+        drawBollingerBands(stockId);
+    } else if (normalizedSignal.includes('stochastic')) {
+        // Stochastic signals
+        drawStochastic(stockId);
+    } else if (normalizedSignal.includes('sma') || normalizedSignal.includes('ema') || normalizedSignal.includes('trend')) {
+        // Trend signals: show common moving averages
+        drawSMA(stockId, 20, '#4CAF50');
+        drawSMA(stockId, 50, '#2196F3');
+    } else {
+        // Default: show basic moving averages
+        drawSMA(stockId, 20, '#4CAF50');
+        drawSMA(stockId, 50, '#2196F3');
+    }
+}
+
+// Clear all indicators from chart
+function clearIndicators(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) return;
+
+    // Remove all indicator series from main chart
+    chartData.indicators.forEach(indicator => {
+        try {
+            chartData.chart.removeSeries(indicator);
+        } catch (e) {
+            // Silently ignore if already removed
+        }
+    });
+    chartData.indicators = [];
+
+    // Unsubscribe from time range changes
+    if (chartData.indicatorChartSubscription) {
+        chartData.indicatorChartSubscription();
+        chartData.indicatorChartSubscription = null;
+    }
+
+    // Disconnect resize observer
+    if (chartData.indicatorChartResizeObserver) {
+        chartData.indicatorChartResizeObserver.disconnect();
+        chartData.indicatorChartResizeObserver = null;
+    }
+
+    // Remove indicator chart if exists
+    if (chartData.indicatorChart) {
+        try {
+            chartData.indicatorChart.remove();
+        } catch (e) {
+            // Silently ignore if already removed
+        }
+        chartData.indicatorChart = null;
+    }
+    chartData.indicatorSeries = [];
+
+    // Hide indicator chart container
+    const indicatorContainer = document.getElementById(`indicator-chart-${stockId}`);
+    if (indicatorContainer) {
+        indicatorContainer.style.display = 'none';
+    }
+}
+
+// Calculate Simple Moving Average
+function calculateSMA(data, period) {
+    const result = [];
+    for (let i = period - 1; i < data.length; i++) {
+        let sum = 0;
+        for (let j = 0; j < period; j++) {
+            sum += data[i - j].close;
+        }
+        result.push({
+            time: data[i].time,
+            value: sum / period
+        });
+    }
+    return result;
+}
+
+// Draw SMA on chart
+function drawSMA(stockId, period, color) {
+    const chartData = stockCharts[stockId];
+    if (!chartData || !chartData.chart) return;
+
+    // Check if chart container still exists in DOM
+    const chartContainer = document.getElementById(`price-chart-${stockId}`);
+    if (!chartContainer || !chartContainer.isConnected) return;
+
+    try {
+        const smaData = calculateSMA(chartData.data, period);
+
+        const smaSeries = chartData.chart.addLineSeries({
+            color: color,
+            lineWidth: 2,
+            title: `SMA${period}`
+        });
+
+        smaSeries.setData(smaData);
+        chartData.indicators.push(smaSeries);
+    } catch (e) {
+        // Silently ignore errors when chart is being removed
+        console.warn('Error drawing SMA:', e.message);
+    }
+}
+
+// Create or get indicator chart
+function getIndicatorChart(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) return null;
+
+    // If indicator chart already exists, return it
+    if (chartData.indicatorChart) {
+        return chartData.indicatorChart;
+    }
+
+    // Create new indicator chart
+    const indicatorContainer = document.getElementById(`indicator-chart-${stockId}`);
+    if (!indicatorContainer) return null;
+
+    indicatorContainer.style.display = 'block';
+
+    const indicatorChart = window.LightweightCharts.createChart(indicatorContainer, {
+        width: indicatorContainer.clientWidth,
+        height: 150,
+        layout: {
+            backgroundColor: '#ffffff',
+            textColor: '#333',
+        },
+        grid: {
+            vertLines: { color: '#e0e0e0' },
+            horzLines: { color: '#e0e0e0' },
+        },
+        timeScale: {
+            borderColor: '#cccccc',
+            visible: true,
+        },
+        rightPriceScale: {
+            borderColor: '#cccccc',
+        }
+    });
+
+    // Sync time scales between main and indicator charts
+    const syncSubscription = chartData.chart.timeScale().subscribeVisibleTimeRangeChange((timeRange) => {
+        // Only update if this is still the current indicator chart (not a removed one)
+        if (timeRange &&
+            indicatorChart &&
+            chartData.indicatorChart === indicatorChart &&
+            indicatorContainer &&
+            indicatorContainer.isConnected) {
+            try {
+                indicatorChart.timeScale().setVisibleRange(timeRange);
+            } catch (e) {
+                // Silently ignore errors when chart is being removed
+            }
+        }
+    });
+
+    // Store indicator chart and subscription
+    chartData.indicatorChart = indicatorChart;
+    chartData.indicatorChartSubscription = syncSubscription;
+
+    // Handle resize
+    const resizeObserver = new ResizeObserver(entries => {
+        if (entries.length === 0 || entries[0].target !== indicatorContainer) return;
+        if (!indicatorChart || !indicatorContainer.isConnected) return;
+        const newRect = entries[0].contentRect;
+        try {
+            indicatorChart.applyOptions({ width: newRect.width });
+        } catch (e) {
+            // Silently ignore errors when chart is being removed
+        }
+    });
+    resizeObserver.observe(indicatorContainer);
+
+    // Store resize observer for cleanup
+    chartData.indicatorChartResizeObserver = resizeObserver;
+
+    return indicatorChart;
+}
+
+// Calculate RSI
+function calculateRSI(data, period = 14) {
+    const changes = [];
+    for (let i = 1; i < data.length; i++) {
+        changes.push(data[i].close - data[i - 1].close);
+    }
+
+    const result = [];
+    for (let i = period; i < changes.length; i++) {
+        let gains = 0;
+        let losses = 0;
+
+        for (let j = 0; j < period; j++) {
+            const change = changes[i - j];
+            if (change > 0) gains += change;
+            else losses -= change;
+        }
+
+        const avgGain = gains / period;
+        const avgLoss = losses / period;
+        const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+        const rsi = 100 - (100 / (1 + rs));
+
+        result.push({
+            time: data[i + 1].time,
+            value: rsi
+        });
+    }
+
+    return result;
+}
+
+// Draw RSI on chart
+function drawRSI(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) return;
+
+    // Check if indicator container still exists in DOM
+    const indicatorContainer = document.getElementById(`indicator-chart-${stockId}`);
+    if (!indicatorContainer || !indicatorContainer.isConnected) return;
+
+    const indicatorChart = getIndicatorChart(stockId);
+    if (!indicatorChart) return;
+
+    try {
+        const rsiData = calculateRSI(chartData.data);
+
+        const rsiSeries = indicatorChart.addLineSeries({
+            color: '#9C27B0',
+            lineWidth: 2,
+            title: 'RSI(14)'
+        });
+
+        rsiSeries.setData(rsiData);
+        chartData.indicatorSeries.push(rsiSeries);
+
+        // Add reference lines at 30 and 70
+        const refLine70 = indicatorChart.addLineSeries({
+            color: '#FF5252',
+            lineWidth: 1,
+            lineStyle: 2
+        });
+        refLine70.setData(rsiData.map(d => ({ time: d.time, value: 70 })));
+        chartData.indicatorSeries.push(refLine70);
+
+        const refLine30 = indicatorChart.addLineSeries({
+            color: '#4CAF50',
+            lineWidth: 1,
+            lineStyle: 2
+        });
+        refLine30.setData(rsiData.map(d => ({ time: d.time, value: 30 })));
+        chartData.indicatorSeries.push(refLine30);
+
+        // Fit content
+        indicatorChart.timeScale().fitContent();
+    } catch (e) {
+        // Silently ignore errors when chart is being removed
+        console.warn('Error drawing RSI:', e.message);
+    }
+}
+
+// Calculate MACD
+function calculateMACD(data, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) {
+    const calculateEMA = (data, period) => {
+        const k = 2 / (period + 1);
+        const result = [];
+        let ema = data[0].close;
+
+        for (let i = 0; i < data.length; i++) {
+            ema = data[i].close * k + ema * (1 - k);
+            result.push({ time: data[i].time, value: ema });
+        }
+        return result;
+    };
+
+    const fastEMA = calculateEMA(data, fastPeriod);
+    const slowEMA = calculateEMA(data, slowPeriod);
+
+    const macdLine = [];
+    for (let i = 0; i < data.length; i++) {
+        macdLine.push({
+            time: data[i].time,
+            value: fastEMA[i].value - slowEMA[i].value
+        });
+    }
+
+    const signalLine = calculateEMA(macdLine, signalPeriod);
+
+    const histogram = [];
+    for (let i = 0; i < macdLine.length; i++) {
+        histogram.push({
+            time: macdLine[i].time,
+            value: macdLine[i].value - signalLine[i].value,
+            color: macdLine[i].value >= signalLine[i].value ? '#26a69a' : '#ef5350'
+        });
+    }
+
+    return { macdLine, signalLine, histogram };
+}
+
+// Draw MACD on chart
+function drawMACD(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) return;
+
+    // Check if indicator container still exists in DOM
+    const indicatorContainer = document.getElementById(`indicator-chart-${stockId}`);
+    if (!indicatorContainer || !indicatorContainer.isConnected) return;
+
+    const indicatorChart = getIndicatorChart(stockId);
+    if (!indicatorChart) return;
+
+    try {
+        const macdData = calculateMACD(chartData.data);
+
+        const macdSeries = indicatorChart.addLineSeries({
+            color: '#2196F3',
+            lineWidth: 2,
+            title: 'MACD'
+        });
+        macdSeries.setData(macdData.macdLine);
+        chartData.indicatorSeries.push(macdSeries);
+
+        const signalSeries = indicatorChart.addLineSeries({
+            color: '#FF9800',
+            lineWidth: 2,
+            title: 'Signal'
+        });
+        signalSeries.setData(macdData.signalLine);
+        chartData.indicatorSeries.push(signalSeries);
+
+        const histogramSeries = indicatorChart.addHistogramSeries({
+            title: 'Histogram'
+        });
+        histogramSeries.setData(macdData.histogram);
+        chartData.indicatorSeries.push(histogramSeries);
+
+        // Fit content
+        indicatorChart.timeScale().fitContent();
+    } catch (e) {
+        // Silently ignore errors when chart is being removed
+        console.warn('Error drawing MACD:', e.message);
+    }
+}
+
+// Calculate Bollinger Bands
+function calculateBollingerBands(data, period = 20, stdDev = 2) {
+    const sma = calculateSMA(data, period);
+    const result = { upper: [], middle: [], lower: [] };
+
+    for (let i = 0; i < sma.length; i++) {
+        const dataIndex = i + period - 1;
+        let sumSquares = 0;
+
+        for (let j = 0; j < period; j++) {
+            const diff = data[dataIndex - j].close - sma[i].value;
+            sumSquares += diff * diff;
+        }
+
+        const stdDevValue = Math.sqrt(sumSquares / period);
+
+        result.middle.push(sma[i]);
+        result.upper.push({
+            time: sma[i].time,
+            value: sma[i].value + (stdDev * stdDevValue)
+        });
+        result.lower.push({
+            time: sma[i].time,
+            value: sma[i].value - (stdDev * stdDevValue)
+        });
+    }
+
+    return result;
+}
+
+// Draw Bollinger Bands on chart
+function drawBollingerBands(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData || !chartData.chart) return;
+
+    // Check if chart container still exists in DOM
+    const chartContainer = document.getElementById(`price-chart-${stockId}`);
+    if (!chartContainer || !chartContainer.isConnected) return;
+
+    try {
+        const bbData = calculateBollingerBands(chartData.data);
+
+        const upperBand = chartData.chart.addLineSeries({
+            color: '#2196F3',
+            lineWidth: 1,
+            title: 'BB Upper'
+        });
+        upperBand.setData(bbData.upper);
+        chartData.indicators.push(upperBand);
+
+        const middleBand = chartData.chart.addLineSeries({
+            color: '#9E9E9E',
+            lineWidth: 1,
+            lineStyle: 2,
+            title: 'BB Middle'
+        });
+        middleBand.setData(bbData.middle);
+        chartData.indicators.push(middleBand);
+
+        const lowerBand = chartData.chart.addLineSeries({
+            color: '#2196F3',
+            lineWidth: 1,
+            title: 'BB Lower'
+        });
+        lowerBand.setData(bbData.lower);
+        chartData.indicators.push(lowerBand);
+    } catch (e) {
+        // Silently ignore errors when chart is being removed
+        console.warn('Error drawing Bollinger Bands:', e.message);
+    }
+}
+
+// Calculate Stochastic Oscillator
+function calculateStochastic(data, period = 14, smoothK = 3, smoothD = 3) {
+    const kValues = [];
+
+    for (let i = period - 1; i < data.length; i++) {
+        let highest = data[i - period + 1].high;
+        let lowest = data[i - period + 1].low;
+
+        for (let j = 0; j < period; j++) {
+            const idx = i - j;
+            if (data[idx].high > highest) highest = data[idx].high;
+            if (data[idx].low < lowest) lowest = data[idx].low;
+        }
+
+        const k = ((data[i].close - lowest) / (highest - lowest)) * 100;
+        kValues.push({ time: data[i].time, value: k });
+    }
+
+    const smoothKValues = [];
+    for (let i = smoothK - 1; i < kValues.length; i++) {
+        let sum = 0;
+        for (let j = 0; j < smoothK; j++) {
+            sum += kValues[i - j].value;
+        }
+        smoothKValues.push({
+            time: kValues[i].time,
+            value: sum / smoothK
+        });
+    }
+
+    const dValues = [];
+    for (let i = smoothD - 1; i < smoothKValues.length; i++) {
+        let sum = 0;
+        for (let j = 0; j < smoothD; j++) {
+            sum += smoothKValues[i - j].value;
+        }
+        dValues.push({
+            time: smoothKValues[i].time,
+            value: sum / smoothD
+        });
+    }
+
+    return { k: smoothKValues, d: dValues };
+}
+
+// Draw Stochastic on chart
+function drawStochastic(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) return;
+
+    // Check if indicator container still exists in DOM
+    const indicatorContainer = document.getElementById(`indicator-chart-${stockId}`);
+    if (!indicatorContainer || !indicatorContainer.isConnected) return;
+
+    const indicatorChart = getIndicatorChart(stockId);
+    if (!indicatorChart) return;
+
+    try {
+        const stochData = calculateStochastic(chartData.data);
+
+        const kSeries = indicatorChart.addLineSeries({
+            color: '#2196F3',
+            lineWidth: 2,
+            title: '%K'
+        });
+        kSeries.setData(stochData.k);
+        chartData.indicatorSeries.push(kSeries);
+
+        const dSeries = indicatorChart.addLineSeries({
+            color: '#FF9800',
+            lineWidth: 2,
+            title: '%D'
+        });
+        dSeries.setData(stochData.d);
+        chartData.indicatorSeries.push(dSeries);
+
+        // Fit content
+        indicatorChart.timeScale().fitContent();
+    } catch (e) {
+        // Silently ignore errors when chart is being removed
+        console.warn('Error drawing Stochastic:', e.message);
+    }
+}
+
+// Calculate Money Flow Index (MFI)
+function calculateMFI(data, period = 14) {
+    const result = [];
+
+    for (let i = period; i < data.length; i++) {
+        let positiveFlow = 0;
+        let negativeFlow = 0;
+
+        for (let j = 0; j < period; j++) {
+            const idx = i - j;
+            const current = data[idx];
+            const previous = data[idx - 1];
+
+            // Typical Price = (High + Low + Close) / 3
+            const typicalPrice = (current.high + current.low + current.close) / 3;
+            const prevTypicalPrice = (previous.high + previous.low + previous.close) / 3;
+
+            // Raw Money Flow = Typical Price * Volume
+            const rawMoneyFlow = typicalPrice * (current.volume || 1);
+
+            // Accumulate positive and negative money flow
+            if (typicalPrice > prevTypicalPrice) {
+                positiveFlow += rawMoneyFlow;
+            } else if (typicalPrice < prevTypicalPrice) {
+                negativeFlow += rawMoneyFlow;
+            }
+        }
+
+        // Money Flow Ratio = Positive Money Flow / Negative Money Flow
+        const moneyFlowRatio = negativeFlow === 0 ? 100 : positiveFlow / negativeFlow;
+
+        // MFI = 100 - (100 / (1 + Money Flow Ratio))
+        const mfi = 100 - (100 / (1 + moneyFlowRatio));
+
+        result.push({
+            time: data[i].date,
+            value: mfi
+        });
+    }
+
+    return result;
+}
+
+// Draw MFI on chart
+function drawMFI(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) return;
+
+    // Check if indicator container still exists in DOM
+    const indicatorContainer = document.getElementById(`indicator-chart-${stockId}`);
+    if (!indicatorContainer || !indicatorContainer.isConnected) return;
+
+    const indicatorChart = getIndicatorChart(stockId);
+    if (!indicatorChart) return;
+
+    try {
+        const mfiData = calculateMFI(chartData.rawData);
+
+        const mfiSeries = indicatorChart.addLineSeries({
+            color: '#00BCD4',
+            lineWidth: 2,
+            title: 'MFI(14)'
+        });
+
+        mfiSeries.setData(mfiData);
+        chartData.indicatorSeries.push(mfiSeries);
+
+        // Add reference lines at 80 (overbought) and 20 (oversold)
+        const refLine80 = indicatorChart.addLineSeries({
+            color: '#FF5252',
+            lineWidth: 1,
+            lineStyle: 2
+        });
+        refLine80.setData(mfiData.map(d => ({ time: d.time, value: 80 })));
+        chartData.indicatorSeries.push(refLine80);
+
+        const refLine20 = indicatorChart.addLineSeries({
+            color: '#4CAF50',
+            lineWidth: 1,
+            lineStyle: 2
+        });
+        refLine20.setData(mfiData.map(d => ({ time: d.time, value: 20 })));
+        chartData.indicatorSeries.push(refLine20);
+
+        // Fit content
+        indicatorChart.timeScale().fitContent();
+    } catch (e) {
+        // Silently ignore errors when chart is being removed
+        console.warn('Error drawing MFI:', e.message);
+    }
+}
+
+// Calculate Commodity Channel Index (CCI)
+function calculateCCI(data, period = 20) {
+    const result = [];
+
+    for (let i = period - 1; i < data.length; i++) {
+        // Calculate Typical Price for current period
+        const typicalPrices = [];
+        for (let j = 0; j < period; j++) {
+            const candle = data[i - j];
+            typicalPrices.push((candle.high + candle.low + candle.close) / 3);
+        }
+
+        // Calculate Simple Moving Average of Typical Price
+        const sma = typicalPrices.reduce((a, b) => a + b, 0) / period;
+
+        // Calculate Mean Deviation
+        const meanDeviation = typicalPrices.reduce((sum, tp) => sum + Math.abs(tp - sma), 0) / period;
+
+        // CCI = (Typical Price - SMA) / (0.015 * Mean Deviation)
+        const currentTypicalPrice = typicalPrices[0];
+        const cci = meanDeviation === 0 ? 0 : (currentTypicalPrice - sma) / (0.015 * meanDeviation);
+
+        result.push({
+            time: data[i].date,
+            value: cci
+        });
+    }
+
+    return result;
+}
+
+// Draw CCI on chart
+function drawCCI(stockId) {
+    const chartData = stockCharts[stockId];
+    if (!chartData) return;
+
+    // Check if indicator container still exists in DOM
+    const indicatorContainer = document.getElementById(`indicator-chart-${stockId}`);
+    if (!indicatorContainer || !indicatorContainer.isConnected) return;
+
+    const indicatorChart = getIndicatorChart(stockId);
+    if (!indicatorChart) return;
+
+    try {
+        const cciData = calculateCCI(chartData.rawData);
+
+        const cciSeries = indicatorChart.addLineSeries({
+            color: '#FF6F00',
+            lineWidth: 2,
+            title: 'CCI(20)'
+        });
+
+        cciSeries.setData(cciData);
+        chartData.indicatorSeries.push(cciSeries);
+
+        // Add reference lines at +100 and -100
+        const refLine100 = indicatorChart.addLineSeries({
+            color: '#FF5252',
+            lineWidth: 1,
+            lineStyle: 2
+        });
+        refLine100.setData(cciData.map(d => ({ time: d.time, value: 100 })));
+        chartData.indicatorSeries.push(refLine100);
+
+        const refLineNeg100 = indicatorChart.addLineSeries({
+            color: '#4CAF50',
+            lineWidth: 1,
+            lineStyle: 2
+        });
+        refLineNeg100.setData(cciData.map(d => ({ time: d.time, value: -100 })));
+        chartData.indicatorSeries.push(refLineNeg100);
+
+        // Add zero line
+        const refLine0 = indicatorChart.addLineSeries({
+            color: '#9E9E9E',
+            lineWidth: 1,
+            lineStyle: 2
+        });
+        refLine0.setData(cciData.map(d => ({ time: d.time, value: 0 })));
+        chartData.indicatorSeries.push(refLine0);
+
+        // Fit content
+        indicatorChart.timeScale().fitContent();
+    } catch (e) {
+        // Silently ignore errors when chart is being removed
+        console.warn('Error drawing CCI:', e.message);
+    }
+}
+
+// Make showSignalIndicator globally accessible
+window.showSignalIndicator = showSignalIndicator;
